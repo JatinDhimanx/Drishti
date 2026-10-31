@@ -170,5 +170,7 @@ class ByteTracker(
         activeTracklets.clear()
         nextTrackId.set(1L)
     }
+
+    fun clear() = reset()
 }
 

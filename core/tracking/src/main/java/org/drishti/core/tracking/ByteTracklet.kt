@@ -27,6 +27,10 @@ class ByteTracklet(
     val history = mutableListOf<TrackPoint>()
     private val MAX_HISTORY = 10
 
+    // 10-Frame Majority Vote Class History
+    val classHistory = mutableListOf<AssistiveClass>()
+    private val MAX_CLASS_HISTORY = 10
+
     var consecutiveHits: Int = 1
     var consecutiveMisses: Int = 0
 
@@ -38,8 +42,26 @@ class ByteTracklet(
 
     val currentBox: BoundingBox get() = predictor.currentBox
 
+    /**
+     * Majority vote class of the last 10 frames.
+     * If votes conflict or class is not consistent, falls back to GENERIC_OBSTACLE.
+     */
+    val smoothedClass: AssistiveClass
+        get() {
+            if (classHistory.isEmpty()) return assistiveClass
+            val votes = classHistory.groupingBy { it }.eachCount()
+            val topEntry = votes.maxByOrNull { it.value } ?: return AssistiveClass.GENERIC_OBSTACLE
+            val majorityRatio = topEntry.value.toFloat() / classHistory.size
+            return if (majorityRatio >= 0.55f && !AssistiveClass.isBlacklisted(topEntry.key.technicalName)) {
+                topEntry.key
+            } else {
+                AssistiveClass.GENERIC_OBSTACLE
+            }
+        }
+
     init {
         history.add(TrackPoint(initialDetection.boundingBox, initialDistanceMeters, lastUpdateTimestampMs))
+        classHistory.add(initialDetection.assistiveClass)
     }
 
     /**
@@ -66,6 +88,11 @@ class ByteTracklet(
         predictor.update(detection.boundingBox, dtSeconds)
         currentDistanceMeters = estimatedDistanceMeters
         assistiveClass = detection.assistiveClass
+
+        classHistory.add(detection.assistiveClass)
+        if (classHistory.size > MAX_CLASS_HISTORY) {
+            classHistory.removeAt(0)
+        }
 
         consecutiveHits++
         consecutiveMisses = 0

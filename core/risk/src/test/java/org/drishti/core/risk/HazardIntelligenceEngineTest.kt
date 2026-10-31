@@ -67,7 +67,7 @@ class HazardIntelligenceEngineTest {
     fun testGroundHazardInPathYieldsCriticalThreat() {
         val pothole = createTracklet(
             id = 2L,
-            itemClass = AssistiveClass.POTHOLE_TRENCH,
+            itemClass = AssistiveClass.POTHOLE_OPEN_TRENCH,
             box = BoundingBox(0.35f, 0.70f, 0.65f, 0.95f),
             distanceMeters = 1.2f, // 1.2m directly in step range
             motionState = MotionState.STATIONARY,
@@ -96,7 +96,7 @@ class HazardIntelligenceEngineTest {
 
         val distantTrashBin = createTracklet(
             id = 20L,
-            itemClass = AssistiveClass.DUSTBIN_RECEPTACLE,
+            itemClass = AssistiveClass.POLE_BOLLARD,
             box = BoundingBox(0.05f, 0.20f, 0.20f, 0.50f),
             distanceMeters = 6.5f,
             motionState = MotionState.STATIONARY,
@@ -137,18 +137,19 @@ class HazardIntelligenceEngineTest {
     fun testThreatEscalationBypassesCooldown() {
         val time = 1000L
 
-        // Track starts as stationary obstacle at 4.5m -> Warning
+        // Track starts as stationary street furniture at 2.8m -> Warning
         val obstacle = createTracklet(
             id = 40L,
-            itemClass = AssistiveClass.PEDESTRIAN_MOVING,
+            itemClass = AssistiveClass.POLE_BOLLARD,
             box = BoundingBox(0.42f, 0.35f, 0.58f, 0.65f),
-            distanceMeters = 4.5f,
+            distanceMeters = 2.8f,
             motionState = MotionState.STATIONARY,
             pathTrajectory = PathTrajectory.IN_PATH_DIRECTLY
         )
 
         val assessments1 = engine.evaluateHazards(listOf(obstacle), time)
         val firstAssessment = assessments1.first()
+        assertEquals(ThreatLevel.WARNING, firstAssessment.threatLevel)
         assertTrue(engine.shouldTriggerAlert(firstAssessment, assessments1, time))
 
         // Only 500ms later (well within 4.0s cooldown), obstacle begins approaching fast -> Escalates to Critical!
@@ -169,6 +170,51 @@ class HazardIntelligenceEngineTest {
         // Must breakthrough cooldown immediately due to threat level jump!
         assertTrue("Threat escalation must bypass repetition cooldown",
             engine.shouldTriggerAlert(escalatedAssessment, assessments2, time + 500L))
+    }
+
+    @Test
+    fun testClassSmoothingMajorityVoteAndConflictFallback() {
+        val det = DetectedObstacle(AssistiveClass.PEDESTRIAN_MOVING, 0.9f, BoundingBox(0.4f, 0.4f, 0.6f, 0.6f))
+        val track = ByteTracklet(55L, AssistiveClass.PEDESTRIAN_MOVING, det, 2.0f)
+
+        // Simulate 7 frames of PEDESTRIAN_MOVING and 3 frames of BICYCLE_ESCOOTER
+        for (i in 1..7) {
+            track.classHistory.add(AssistiveClass.PEDESTRIAN_MOVING)
+        }
+        for (i in 1..3) {
+            track.classHistory.add(AssistiveClass.BICYCLE_ESCOOTER)
+        }
+
+        // Majority (70%) is PEDESTRIAN_MOVING -> smoothedClass is PEDESTRIAN_MOVING
+        assertEquals(AssistiveClass.PEDESTRIAN_MOVING, track.smoothedClass)
+
+        // Now clear and simulate a tie/split vote (4 of A, 4 of B, 2 of C)
+        track.classHistory.clear()
+        for (i in 1..4) track.classHistory.add(AssistiveClass.CAR_VAN_TRUCK)
+        for (i in 1..4) track.classHistory.add(AssistiveClass.POLE_BOLLARD)
+        for (i in 1..2) track.classHistory.add(AssistiveClass.ANIMAL_DOG_CATTLE)
+
+        // No majority >= 55% -> MUST fallback to GENERIC_OBSTACLE
+        assertEquals(AssistiveClass.GENERIC_OBSTACLE, track.smoothedClass)
+    }
+
+    @Test
+    fun testDistantObstacleBeyond3Point5MetersIsSilent() {
+        val distantObstacle = createTracklet(
+            id = 66L,
+            itemClass = AssistiveClass.POLE_BOLLARD,
+            box = BoundingBox(0.4f, 0.3f, 0.6f, 0.5f),
+            distanceMeters = 4.2f, // > 3.5m
+            motionState = MotionState.STATIONARY,
+            pathTrajectory = PathTrajectory.IN_PATH_DIRECTLY
+        )
+
+        val assessments = engine.evaluateHazards(listOf(distantObstacle))
+        assertEquals(1, assessments.size)
+        // Must be ThreatLevel.NONE and silent
+        assertEquals(ThreatLevel.NONE, assessments.first().threatLevel)
+        assertEquals("", assessments.first().alertSpeech)
+        assertFalse(engine.shouldTriggerAlert(assessments.first(), assessments))
     }
 }
 

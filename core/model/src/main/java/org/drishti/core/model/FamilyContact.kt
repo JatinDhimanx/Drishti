@@ -24,6 +24,8 @@ data class SafetySharingStatus(
     val interval: LocationSharingInterval = LocationSharingInterval.MINUTES_5,
     val lastDispatchedTimestampMs: Long = 0L,
     val lastLatitude: Double? = null,
-    val lastLongitude: Double? = null
+    val lastLongitude: Double? = null,
+    val totalDispatchedCount: Int = 0,
+    val lastStatusMessage: String = ""
 )
 

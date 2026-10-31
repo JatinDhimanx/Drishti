@@ -90,12 +90,10 @@ class HazardIntelligenceEngine(
             return true
         }
 
-        // Tiered Cooldown to prevent repetitive audio fatigue
+        // Cooldown: 4.0s per track ID unless threat level escalates
         val cooldownMs = when (assessment.threatLevel) {
             ThreatLevel.CRITICAL -> 2500L
-            ThreatLevel.WARNING -> 4000L
-            ThreatLevel.CAUTION -> 6000L
-            ThreatLevel.ADVISORY -> 8000L
+            ThreatLevel.WARNING, ThreatLevel.CAUTION, ThreatLevel.ADVISORY -> 4000L
             ThreatLevel.NONE -> Long.MAX_VALUE
         }
 
@@ -111,7 +109,7 @@ class HazardIntelligenceEngine(
      * Contextual Threat Scoring Model.
      */
     private fun calculateThreatScore(track: ByteTracklet): Float {
-        val category = track.assistiveClass.category
+        val category = track.smoothedClass.category
 
         // 1. Base Hazard Weight
         var baseScore = when (category) {
@@ -139,16 +137,15 @@ class HazardIntelligenceEngine(
         } else if (dist < 1.5f) {
             score += 45f // Immediate stepping hazard
         } else if (dist < 3.5f) {
-            score += 25f // Within 2-3 paces
+            score += 25f // Within walking range
         }
 
         // 4. Motion State Adjustments
         when (track.motionState) {
             MotionState.APPROACHING -> score += 20f
-            MotionState.RECEDING -> score *= 0.35f // Moving away presents minimal risk
+            MotionState.RECEDING -> score *= 0.25f // Moving away presents minimal risk
             MotionState.STATIONARY -> {
-                // If stationary in path, it's an obstruction; if outside path, largely harmless
-                if (track.pathTrajectory == PathTrajectory.OUTSIDE_PATH) score *= 0.30f
+                if (track.pathTrajectory == PathTrajectory.OUTSIDE_PATH) score *= 0.20f
             }
             else -> {}
         }
@@ -157,8 +154,23 @@ class HazardIntelligenceEngine(
     }
 
     private fun scoreToThreatLevel(score: Float, track: ByteTracklet): ThreatLevel {
-        // Safe receding objects far away are always ignored
-        if (track.motionState == MotionState.RECEDING && track.currentDistanceMeters > 3.0f) {
+        // Strict corridor & distance silence gating:
+        // Objects moving away, or farther than 3.5m (unless fast closing vehicle), or outside corridor -> silent
+        val isMovingAway = track.motionState == MotionState.RECEDING
+        val isFar = track.currentDistanceMeters > 3.5f
+        val isFastVehicle = (track.smoothedClass == AssistiveClass.CAR_VAN_TRUCK || track.smoothedClass == AssistiveClass.MOTORCYCLE_RICKSHAW) &&
+                track.motionState == MotionState.APPROACHING &&
+                (track.timeToCollisionSeconds ?: 10f) < 3.0f
+
+        if (isMovingAway) {
+            return ThreatLevel.NONE
+        }
+
+        if (isFar && !isFastVehicle) {
+            return ThreatLevel.NONE
+        }
+
+        if (track.pathTrajectory == PathTrajectory.OUTSIDE_PATH && track.currentDistanceMeters > 2.0f && !isFastVehicle) {
             return ThreatLevel.NONE
         }
 
@@ -178,7 +190,7 @@ class HazardIntelligenceEngine(
         distTier: DistanceTier
     ): String {
         val distM = (track.currentDistanceMeters * 10).roundToInt() / 10f
-        val item = track.assistiveClass
+        val item = track.smoothedClass
 
         val zoneHi = when (zone) {
             SpatialZone.CENTER -> "Samne"

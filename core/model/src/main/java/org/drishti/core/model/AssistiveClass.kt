@@ -1,8 +1,9 @@
 package org.drishti.core.model
 
 /**
- * 24 Ground-Truth Assistive Obstacle Classes formulated for pedestrian mobility
- * of people who are blind or have low vision (BLV).
+ * Strict 12-Class Whitelist for Drishti Pedestrian Hazard Perception.
+ * All indoor/irrelevant objects (table, chair, laptop, tv, etc.) are strictly blacklisted
+ * and must NEVER be announced.
  */
 enum class AssistiveClass(
     val classId: Int,
@@ -12,37 +13,22 @@ enum class AssistiveClass(
     val category: HazardCategory,
     val defaultConfidenceThreshold: Float
 ) {
-    // Group 1: Ground & Footway Hazards
-    POTHOLE_TRENCH(1, "pothole_open_trench", "Pothole", "Gaddha", HazardCategory.GROUND_HAZARD, 0.45f),
-    CURB_STEP_DOWN(2, "curb_step_down", "Step down", "Neechi sidhi", HazardCategory.GROUND_HAZARD, 0.45f),
-    CURB_STEP_UP(3, "curb_step_up", "Step up", "Oonchi sidhi", HazardCategory.GROUND_HAZARD, 0.50f),
-    STAIRS_DOWNWARD(4, "stairs_downward", "Stairs downward", "Neeche jati sidhiyan", HazardCategory.GROUND_HAZARD, 0.45f),
-    STAIRS_UPWARD(5, "stairs_upward", "Stairs upward", "Upar jati sidhiyan", HazardCategory.GROUND_HAZARD, 0.50f),
-    PUDDLE_SLIPPERY(6, "puddle_slippery_surface", "Slippery puddle", "Pani ka gaddha", HazardCategory.GROUND_HAZARD, 0.55f),
+    // 12 Whitelist Hazard Classes
+    STAIRS_DOWN(1, "stairs_down", "Stairs downward", "Neeche jati sidhiyan", HazardCategory.GROUND_HAZARD, 0.45f),
+    STAIRS_UP(2, "stairs_up", "Stairs upward", "Upar jati sidhiyan", HazardCategory.GROUND_HAZARD, 0.50f),
+    POTHOLE_OPEN_TRENCH(3, "pothole_open_trench", "Pothole or trench", "Gaddha", HazardCategory.GROUND_HAZARD, 0.45f),
+    CURB_STEP(4, "curb_step", "Curb step", "Sadak ki sidhi", HazardCategory.GROUND_HAZARD, 0.45f),
+    OVERHANGING_BRANCH(5, "overhanging_branch", "Overhanging branch", "Ped ki daali", HazardCategory.HEAD_LEVEL, 0.50f),
+    PROTRUDING_SIGNBOARD(6, "protruding_signboard", "Signboard", "Signboard", HazardCategory.HEAD_LEVEL, 0.50f),
+    PEDESTRIAN_MOVING(7, "pedestrian_moving", "Person", "Vyasti", HazardCategory.DYNAMIC_ACTOR, 0.55f),
+    BICYCLE_ESCOOTER(8, "bicycle_escooter", "Bicycle", "Cycle", HazardCategory.DYNAMIC_ACTOR, 0.55f),
+    MOTORCYCLE_RICKSHAW(9, "motorcycle_rickshaw", "Motorcycle or auto", "Motorcycle ya auto", HazardCategory.DYNAMIC_ACTOR, 0.55f),
+    CAR_VAN_TRUCK(10, "car_van_truck", "Vehicle", "Gadi", HazardCategory.DYNAMIC_ACTOR, 0.55f),
+    ANIMAL_DOG_CATTLE(11, "animal_dog_cattle", "Animal", "Janwar", HazardCategory.DYNAMIC_ACTOR, 0.65f),
+    POLE_BOLLARD(12, "pole_bollard", "Pole or bollard", "Khamba", HazardCategory.STREET_FURNITURE, 0.65f),
 
-    // Group 2: Head & Eye-Level Protrusions (White Cane Blindspots)
-    OVERHANGING_BRANCH(7, "overhanging_branch", "Tree branch", "Ped ki daali", HazardCategory.HEAD_LEVEL, 0.50f),
-    PROTRUDING_SIGNBOARD(8, "protruding_signboard", "Signboard", "Signboard", HazardCategory.HEAD_LEVEL, 0.50f),
-    OPEN_AWNING_SUNSHADE(9, "open_awning_sunshade", "Awning", "Chhat", HazardCategory.HEAD_LEVEL, 0.50f),
-    CONSTRUCTION_SCAFFOLD(10, "construction_scaffold", "Scaffolding", "Peeche scaffold", HazardCategory.HEAD_LEVEL, 0.50f),
-    OPEN_TRUCK_TAILGATE(11, "open_truck_tailgate", "Open truck gate", "Truck ka khula gate", HazardCategory.HEAD_LEVEL, 0.50f),
-
-    // Group 3: Dynamic Urban Actors
-    PEDESTRIAN_MOVING(12, "pedestrian_moving", "Person", "Vyasti", HazardCategory.DYNAMIC_ACTOR, 0.55f),
-    BICYCLE_ESCOOTER(13, "bicycle_escooter", "Bicycle", "Cycle", HazardCategory.DYNAMIC_ACTOR, 0.55f),
-    MOTORCYCLE_RICKSHAW(14, "motorcycle_rickshaw", "Motorcycle", "Motorcycle", HazardCategory.DYNAMIC_ACTOR, 0.55f),
-    CAR_VAN_TRUCK(15, "car_van_truck", "Car", "Gadi", HazardCategory.DYNAMIC_ACTOR, 0.55f),
-    ANIMAL_DOG_CATTLE(16, "animal_dog_cattle", "Animal", "Janwar", HazardCategory.DYNAMIC_ACTOR, 0.55f),
-
-    // Group 4: Static Street Infrastructure
-    UTILITY_POLE(17, "utility_pole_lamp", "Pole", "Khamba", HazardCategory.STREET_FURNITURE, 0.60f),
-    BOLLARD(18, "bollard_short_post", "Bollard", "Chhota khamba", HazardCategory.STREET_FURNITURE, 0.60f),
-    PLANTER_BOX(19, "planter_box", "Planter", "Gamla", HazardCategory.STREET_FURNITURE, 0.65f),
-    DUSTBIN_RECEPTACLE(20, "dustbin_receptacle", "Dustbin", "Kudedan", HazardCategory.STREET_FURNITURE, 0.65f),
-    BARRICADE_FENCE(21, "barricade_fence", "Barricade", "Barricade", HazardCategory.STREET_FURNITURE, 0.55f),
-    DOOR_ENTRANCE(22, "door_entrance", "Door", "Darwaza", HazardCategory.STREET_FURNITURE, 0.65f),
-    LOW_WALL_MEDIAN(23, "low_wall_median", "Divider wall", "Divider", HazardCategory.STREET_FURNITURE, 0.60f),
-    WIRE_CABLE_HAZARD(24, "wire_cable_hazard", "Hanging wire", "Latakta taar", HazardCategory.HEAD_LEVEL, 0.45f);
+    // Generic Fallback (Used when Geometry detects an obstacle, but detector is unconfident or unlisted)
+    GENERIC_OBSTACLE(0, "generic_obstacle", "Obstacle", "Rukaawat", HazardCategory.STREET_FURNITURE, 0.40f);
 
     enum class HazardCategory {
         GROUND_HAZARD,
@@ -52,6 +38,32 @@ enum class AssistiveClass(
     }
 
     companion object {
+        val WHITELIST_TECHNICAL_NAMES = entries.filter { it != GENERIC_OBSTACLE }.map { it.technicalName }.toSet()
+
+        /**
+         * Hard blacklist of indoor and non-assistive objects.
+         * Must never be spoken or mapped to specific names.
+         */
+        val HARD_BLACKLISTED_LABELS = setOf(
+            "laptop", "computer", "screen", "display", "monitor",
+            "table", "dining table", "desk", "coffee table",
+            "chair", "armchair", "seat", "sofa", "couch", "bed",
+            "tv", "television", "remote",
+            "bottle", "cup", "wine glass", "fork", "knife", "spoon", "bowl",
+            "book", "magazine", "newspaper",
+            "keyboard", "mouse", "cell phone", "phone", "clock",
+            "microwave", "oven", "toaster", "sink", "refrigerator", "toilet",
+            "vase", "scissors", "teddy bear", "hair drier", "toothbrush",
+            "floor", "flooring", "ceiling", "carpet", "tile", "wall", "shadow"
+        )
+
         fun fromId(id: Int): AssistiveClass? = entries.find { it.classId == id }
+
+        fun isBlacklisted(label: String): Boolean {
+            val lower = label.lowercase().trim()
+            return HARD_BLACKLISTED_LABELS.any { blacklisted ->
+                lower == blacklisted || lower.contains(blacklisted)
+            }
+        }
     }
 }

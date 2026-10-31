@@ -110,7 +110,8 @@ private val SuccessGreen = Color(0xFF00E676)
 data class SearchResultItem(
     val name: String,
     val lat: Double,
-    val lon: Double
+    val lon: Double,
+    val distanceMeters: Int = 0
 )
 
 data class TurnStep(
@@ -184,7 +185,7 @@ fun LiveMapRouteSelectorScreen(
                         mapViewInstance?.invalidate()
                     }
                 }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {}
     }
 
     DisposableEffect(Unit) {
@@ -389,7 +390,7 @@ fun LiveMapRouteSelectorScreen(
                         if (query.length >= 3) {
                             coroutineScope.launch {
                                 isSearching = true
-                                searchResults = searchNominatim(query)
+                                searchResults = searchNominatim(query, userLat, userLon)
                                 isSearching = false
                             }
                         } else {
@@ -398,10 +399,14 @@ fun LiveMapRouteSelectorScreen(
                     },
                     modifier = Modifier.weight(1f),
                     placeholder = {
-                        Text("Search any place (e.g. Connaught Place)...", color = TextSecondary, fontSize = 12.sp)
+                        Text("Search place (e.g. Metro, Hospital)...", color = TextSecondary, fontSize = 12.sp)
                     },
                     leadingIcon = {
-                        Icon(Icons.Default.Search, contentDescription = null, tint = PrimaryOrange, modifier = Modifier.size(18.dp))
+                        if (isSearching) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = PrimaryOrange, strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Default.Search, contentDescription = null, tint = PrimaryOrange, modifier = Modifier.size(18.dp))
+                        }
                     },
                     trailingIcon = {
                         if (searchQuery.isNotEmpty()) {
@@ -454,7 +459,7 @@ fun LiveMapRouteSelectorScreen(
                                             speechManager.speakGuidance("Aapki current location par map center kiya gaya.")
                                         }
                                     }
-                            } catch (_: Exception) {}
+                            } catch (e: Exception) {}
                         },
                     contentAlignment = Alignment.Center
                 ) {
@@ -486,7 +491,7 @@ fun LiveMapRouteSelectorScreen(
                                     searchQuery = item.name
                                     selectedLat = item.lat
                                     selectedLon = item.lon
-                                    destinationName = item.name.split(",").firstOrNull() ?: item.name
+                                    destinationName = item.name.split(",").firstOrNull()?.trim() ?: item.name
                                     hasDestinationSet = true
                                     searchResults = emptyList()
 
@@ -496,21 +501,47 @@ fun LiveMapRouteSelectorScreen(
                                     mapViewInstance?.controller?.setZoom(16.5)
                                     mapViewInstance?.invalidate()
 
+                                    val distStr = if (item.distanceMeters > 0) " (Doori: ${formatDistance(item.distanceMeters)})" else ""
                                     hapticManager.vibrateClick()
-                                    speechManager.speakGuidance("$destinationName select kiya gaya. Navigation shuru karne ke liye niche Start dabayein.")
+                                    speechManager.speakGuidance("$destinationName select kiya gaya$distStr. Niche Camera Navigation ya Map Route chunen.")
                                 }
                                 .padding(10.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Icon(Icons.Default.Place, contentDescription = null, tint = PrimaryOrange, modifier = Modifier.size(16.dp))
-                            Text(
-                                text = item.name,
-                                color = TextWhite,
-                                fontSize = 12.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(Icons.Default.Place, contentDescription = null, tint = PrimaryOrange, modifier = Modifier.size(18.dp))
+                                Column {
+                                    Text(
+                                        text = item.name.split(",").firstOrNull()?.trim() ?: item.name,
+                                        color = TextWhite,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = item.name,
+                                        color = TextSecondary,
+                                        fontSize = 10.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                            if (item.distanceMeters > 0) {
+                                Text(
+                                    text = formatDistance(item.distanceMeters),
+                                    color = SafetyCyan,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(start = 8.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -525,35 +556,43 @@ fun LiveMapRouteSelectorScreen(
                         .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    QuickChip("Metro Station") {
+                    QuickChip("🚇 Metro Station") {
                         searchQuery = "Metro Station"
                         coroutineScope.launch {
                             isSearching = true
-                            searchResults = searchNominatim("Metro Station")
+                            searchResults = searchNominatim("Metro Station", userLat, userLon)
                             isSearching = false
                         }
                     }
-                    QuickChip("Hospital") {
+                    QuickChip("🏥 Hospital") {
                         searchQuery = "Hospital"
                         coroutineScope.launch {
                             isSearching = true
-                            searchResults = searchNominatim("Hospital")
+                            searchResults = searchNominatim("Hospital", userLat, userLon)
                             isSearching = false
                         }
                     }
-                    QuickChip("Market") {
+                    QuickChip("🛒 Market") {
                         searchQuery = "Market"
                         coroutineScope.launch {
                             isSearching = true
-                            searchResults = searchNominatim("Market")
+                            searchResults = searchNominatim("Market", userLat, userLon)
                             isSearching = false
                         }
                     }
-                    QuickChip("Bus Stand") {
+                    QuickChip("🚌 Bus Stand") {
                         searchQuery = "Bus Stand"
                         coroutineScope.launch {
                             isSearching = true
-                            searchResults = searchNominatim("Bus Stand")
+                            searchResults = searchNominatim("Bus Stand", userLat, userLon)
+                            isSearching = false
+                        }
+                    }
+                    QuickChip("🏦 Bank / ATM") {
+                        searchQuery = "ATM"
+                        coroutineScope.launch {
+                            isSearching = true
+                            searchResults = searchNominatim("ATM", userLat, userLon)
                             isSearching = false
                         }
                     }
@@ -712,6 +751,10 @@ fun LiveMapRouteSelectorScreen(
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     // Pinned Location Info Row
+                    val directDist = calculateDistanceMeters(userLat, userLon, selectedLat, selectedLon)
+                    val distText = formatDistance(directDist)
+                    val etaText = formatEta(directDist)
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -719,17 +762,17 @@ fun LiveMapRouteSelectorScreen(
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(44.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(PrimaryOrange.copy(alpha = 0.15f))
-                                .border(1.dp, PrimaryOrange, RoundedCornerShape(12.dp)),
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(PrimaryOrange.copy(alpha = 0.18f))
+                                .border(1.dp, PrimaryOrange, RoundedCornerShape(14.dp)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = if (isNavigating) Icons.Default.Navigation else Icons.Default.Place,
                                 contentDescription = null,
                                 tint = PrimaryOrange,
-                                modifier = Modifier.size(24.dp)
+                                modifier = Modifier.size(26.dp)
                             )
                         }
 
@@ -742,61 +785,47 @@ fun LiveMapRouteSelectorScreen(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            Text(
-                                text = if (isNavigating) "Kul Doori: $totalRouteDistanceMeters m" else "Map par kisi bhi jagah tap karke pin karein",
-                                fontSize = 11.sp,
-                                color = TextSecondary
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = "📍 $distText",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = SafetyCyan
+                                )
+                                Text(text = "•", fontSize = 11.sp, color = TextSecondary)
+                                Text(
+                                    text = "🚶 $etaText",
+                                    fontSize = 11.sp,
+                                    color = TextSecondary
+                                )
+                            }
                         }
                     }
 
                     // Main Action Buttons
                     if (!isNavigating) {
-                        // START REAL-WORLD PEDESTRIAN NAVIGATION BUTTON
+                        // 1. PRIMARY BUTTON: START LIVE CAMERA AI NAVIGATION (High-Contrast Emerald / Cyan Gradient)
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(52.dp)
+                                .height(56.dp)
                                 .clip(RoundedCornerShape(14.dp))
-                                .background(PrimaryOrange)
-                                .clickable {
-                                    calculateAndStartRoute(selectedLat, selectedLon, destinationName)
-                                }
-                                .semantics {
-                                    contentDescription = "Start real world navigation to $destinationName"
-                                    role = Role.Button
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (isRouteCalculating) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = PureBlack, strokeWidth = 2.dp)
-                                    Text("Rasta dhoondh rahe hain...", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = PureBlack)
-                                }
-                            } else {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Icon(Icons.Default.Navigation, contentDescription = null, tint = PureBlack, modifier = Modifier.size(20.dp))
-                                    Text("START ROUTE NAVIGATION", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = PureBlack)
-                                }
-                            }
-                        }
-
-                        // Also provide direct Camera Obstacle Navigation
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(46.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(Color(0xFF1E2434))
-                                .border(1.dp, NavBlue, RoundedCornerShape(14.dp))
+                                .background(
+                                    brush = androidx.compose.ui.graphics.Brush.horizontalGradient(
+                                        colors = listOf(Color(0xFF00E5FF), Color(0xFF00E676))
+                                    )
+                                )
                                 .clickable {
                                     hapticManager.vibrateClick()
+                                    speechManager.speakCritical(
+                                        if (speechManager.currentLanguage == "hi")
+                                            "$destinationName ke liye Camera Navigation shuru ho gaya hai. Phone ko samne seedha rakhein."
+                                        else
+                                            "Starting Camera AI Navigation to $destinationName. Hold your phone forward."
+                                    )
                                     onStartRoute(
                                         Waypoint(
                                             id = System.currentTimeMillis(),
@@ -805,15 +834,62 @@ fun LiveMapRouteSelectorScreen(
                                             longitude = selectedLon
                                         )
                                     )
+                                }
+                                .semantics {
+                                    contentDescription = "Start Live Camera AI Navigation to $destinationName"
+                                    role = Role.Button
                                 },
                             contentAlignment = Alignment.Center
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                Icon(Icons.Default.CameraAlt, contentDescription = null, tint = NavBlue, modifier = Modifier.size(18.dp))
-                                Text("Live Camera Obstacle Scanner", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = NavBlue)
+                                Box(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(CircleShape)
+                                        .background(PureBlack.copy(alpha = 0.2f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Default.CameraAlt, contentDescription = null, tint = PureBlack, modifier = Modifier.size(20.dp))
+                                }
+                                Column {
+                                    Text("START CAMERA AI NAVIGATION", fontSize = 13.sp, fontWeight = FontWeight.Black, color = PureBlack)
+                                    Text("Live Location Guidance • Obstacle Avoidance • Vibration", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = PureBlack.copy(alpha = 0.85f))
+                                }
+                            }
+                        }
+
+                        // 2. SECONDARY BUTTON: PREVIEW ROUTE ON MAP
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF191E2C))
+                                .border(1.dp, CardBorderColor, RoundedCornerShape(12.dp))
+                                .clickable {
+                                    calculateAndStartRoute(selectedLat, selectedLon, destinationName)
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (isRouteCalculating) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = SafetyCyan, strokeWidth = 2.dp)
+                                    Text("Rasta calculate ho raha hai...", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SafetyCyan)
+                                }
+                            } else {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(Icons.Default.Map, contentDescription = null, tint = SafetyCyan, modifier = Modifier.size(18.dp))
+                                    Text("Preview Route on Map", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextWhite)
+                                }
                             }
                         }
                     } else {
@@ -821,9 +897,13 @@ fun LiveMapRouteSelectorScreen(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(50.dp)
+                                .height(52.dp)
                                 .clip(RoundedCornerShape(14.dp))
-                                .background(SuccessGreen)
+                                .background(
+                                    brush = androidx.compose.ui.graphics.Brush.horizontalGradient(
+                                        colors = listOf(Color(0xFF00E5FF), Color(0xFF00E676))
+                                    )
+                                )
                                 .clickable {
                                     hapticManager.vibrateClick()
                                     onStartRoute(
@@ -842,7 +922,7 @@ fun LiveMapRouteSelectorScreen(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 Icon(Icons.Default.CameraAlt, contentDescription = null, tint = PureBlack, modifier = Modifier.size(20.dp))
-                                Text("SWITCH TO AI CAMERA SCANNER", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = PureBlack)
+                                Text("SWITCH TO CAMERA AI NAVIGATION", fontSize = 13.sp, fontWeight = FontWeight.Black, color = PureBlack)
                             }
                         }
 
@@ -850,7 +930,7 @@ fun LiveMapRouteSelectorScreen(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(42.dp)
+                                .height(40.dp)
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(Color(0xFF261010))
                                 .border(1.dp, Color(0xFFD32F2F), RoundedCornerShape(12.dp))
@@ -915,10 +995,30 @@ private fun getManeuverIcon(modifier: String, type: String): ImageVector {
     }
 }
 
-private suspend fun searchNominatim(query: String): List<SearchResultItem> = withContext(Dispatchers.IO) {
+private fun calculateDistanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Int {
+    val r = 6371000.0 // Earth radius in meters
+    val dLat = Math.toRadians(lat2 - lat1)
+    val dLon = Math.toRadians(lon2 - lon1)
+    val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2)
+    val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    return (r * c).toInt()
+}
+
+private fun formatDistance(meters: Int): String {
+    return if (meters >= 1000) String.format("%.1f km", meters / 1000.0) else "$meters m"
+}
+
+private fun formatEta(meters: Int): String {
+    val mins = (meters / 75).coerceAtLeast(1)
+    return if (mins >= 60) "${mins / 60}h ${mins % 60}m walk" else "~$mins min walk"
+}
+
+private suspend fun searchNominatim(query: String, userLat: Double = 0.0, userLon: Double = 0.0): List<SearchResultItem> = withContext(Dispatchers.IO) {
     try {
         val encoded = URLEncoder.encode(query, "UTF-8")
-        val url = URL("https://nominatim.openstreetmap.org/search?q=$encoded&format=json&limit=5&addressdetails=1")
+        val url = URL("https://nominatim.openstreetmap.org/search?q=$encoded&format=json&limit=6&addressdetails=1")
         val conn = url.openConnection() as HttpURLConnection
         conn.setRequestProperty("User-Agent", "Drishti-Mobility-Assistant-App")
         conn.connectTimeout = 6000
@@ -932,10 +1032,12 @@ private suspend fun searchNominatim(query: String): List<SearchResultItem> = wit
             val name = obj.optString("display_name", "Location")
             val lat = obj.getDouble("lat")
             val lon = obj.getDouble("lon")
-            list.add(SearchResultItem(name, lat, lon))
+            val dist = if (userLat != 0.0 && userLon != 0.0) calculateDistanceMeters(userLat, userLon, lat, lon) else 0
+            list.add(SearchResultItem(name, lat, lon, dist))
         }
-        list
-    } catch (_: Exception) {
+        list.sortedBy { if (it.distanceMeters > 0) it.distanceMeters else Int.MAX_VALUE }
+    } catch (e: Exception) {
         emptyList()
     }
 }
+

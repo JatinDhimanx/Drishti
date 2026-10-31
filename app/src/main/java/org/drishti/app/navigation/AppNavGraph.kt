@@ -148,7 +148,7 @@ fun AppNavGraph() {
             LiveCameraNavScreen(
                 speechManager = speechManager,
                 hapticManager = hapticManager,
-                activeRouteName = activeRouteDestination?.label,
+                activeRouteDestination = activeRouteDestination,
                 onOpenObstacleDetails = { obstacles ->
                     detailObstacles = obstacles
                     currentScreen = AppScreen.OBSTACLE_DETAILS

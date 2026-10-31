@@ -3,105 +3,100 @@ package org.drishti.core.inference
 import org.drishti.core.model.AssistiveClass
 
 /**
- * Universal Taxonomy Mapper for Drishti.
- * Translates COCO class IDs, ML Kit classification labels, and custom model heads
- * into the 24 ground-truth AssistiveClass categories.
+ * Strict 12-Class Taxonomy Mapper for Drishti.
+ * Maps custom detector output indices and whitelist labels to Drishti's 12 hazard classes.
+ * Explicitly rejects and blocks all blacklisted indoor objects (laptop, table, chair, etc.).
  */
 object AssistiveTaxonomyMapper {
 
     /**
-     * Maps standard COCO 80-class detection indices to Drishti AssistiveClass.
+     * Maps the 12 custom detector classes (0 to 11):
+     * 0: stairs_down
+     * 1: stairs_up
+     * 2: pothole_open_trench
+     * 3: curb_step
+     * 4: overhanging_branch
+     * 5: protruding_signboard
+     * 6: pedestrian_moving
+     * 7: bicycle_escooter
+     * 8: motorcycle_rickshaw
+     * 9: car_van_truck
+     * 10: animal_dog_cattle
+     * 11: pole_bollard
      */
-    fun fromCocoClassIndex(cocoIndex: Int): AssistiveClass? {
-        return when (cocoIndex) {
-            0 -> AssistiveClass.PEDESTRIAN_MOVING     // person
-            1 -> AssistiveClass.BICYCLE_ESCOOTER       // bicycle
-            2 -> AssistiveClass.CAR_VAN_TRUCK          // car
-            3 -> AssistiveClass.MOTORCYCLE_RICKSHAW    // motorcycle
-            5 -> AssistiveClass.CAR_VAN_TRUCK          // bus
-            7 -> AssistiveClass.CAR_VAN_TRUCK          // truck
-            9 -> AssistiveClass.UTILITY_POLE           // traffic light
-            10 -> AssistiveClass.BOLLARD               // fire hydrant
-            11 -> AssistiveClass.UTILITY_POLE          // stop sign
-            13 -> AssistiveClass.PLANTER_BOX           // bench
-            15 -> AssistiveClass.ANIMAL_DOG_CATTLE     // cat
-            16 -> AssistiveClass.ANIMAL_DOG_CATTLE     // dog
-            17 -> AssistiveClass.ANIMAL_DOG_CATTLE     // horse
-            18 -> AssistiveClass.ANIMAL_DOG_CATTLE     // sheep
-            19 -> AssistiveClass.ANIMAL_DOG_CATTLE     // cow
+    fun from12ClassWhitelistIndex(index: Int): AssistiveClass? {
+        return when (index) {
+            0 -> AssistiveClass.STAIRS_DOWN
+            1 -> AssistiveClass.STAIRS_UP
+            2 -> AssistiveClass.POTHOLE_OPEN_TRENCH
+            3 -> AssistiveClass.CURB_STEP
+            4 -> AssistiveClass.OVERHANGING_BRANCH
+            5 -> AssistiveClass.PROTRUDING_SIGNBOARD
+            6 -> AssistiveClass.PEDESTRIAN_MOVING
+            7 -> AssistiveClass.BICYCLE_ESCOOTER
+            8 -> AssistiveClass.MOTORCYCLE_RICKSHAW
+            9 -> AssistiveClass.CAR_VAN_TRUCK
+            10 -> AssistiveClass.ANIMAL_DOG_CATTLE
+            11 -> AssistiveClass.POLE_BOLLARD
             else -> null
         }
     }
 
     /**
-     * Maps string label (from ML Kit ImageLabeler or ObjectDetector) to AssistiveClass.
-     * Evaluates high-risk ground and infrastructure hazards first with exact word matching
-     * on short words to prevent false sub-string matches (e.g. 'tree' in 'street', 'man' in 'manhole').
+     * Resolves text label strictly against the 12 whitelist classes.
+     * If the label matches a blacklisted term (table, chair, laptop, desk, etc.), returns null.
      */
     fun fromLabelText(label: String): AssistiveClass? {
-        val normalized = label.lowercase().trim()
-        val words = normalized.split("[\\s,._\\-]+".toRegex())
+        val lower = label.lowercase().trim()
 
+        // 1. Explicit Blacklist Check: Never map or announce blacklisted indoor objects
+        if (AssistiveClass.isBlacklisted(lower)) {
+            return null
+        }
+
+        // 2. Exact or Strict Keyword Matching for Whitelist Only
         return when {
-            // 1. Ground hazards (evaluate before persons to avoid 'man' in 'manhole')
-            normalized.contains("pothole") || normalized.contains("manhole") || normalized.contains("trench") ||
-            normalized.contains("open drain") || normalized.contains("drain") || words.contains("pit") ||
-            words.contains("hole") ->
-                AssistiveClass.POTHOLE_TRENCH
+            // Drop-offs & ground hazards
+            lower.contains("stairs_down") || (lower.contains("down") && (lower.contains("stair") || lower.contains("step"))) ->
+                AssistiveClass.STAIRS_DOWN
 
-            normalized.contains("stairs") || normalized.contains("staircase") || words.contains("steps") || words.contains("step") ->
-                AssistiveClass.STAIRS_DOWNWARD
+            lower.contains("stairs_up") || (lower.contains("up") && (lower.contains("stair") || lower.contains("step"))) ||
+            (lower.contains("stair") && !lower.contains("down")) ->
+                AssistiveClass.STAIRS_UP
 
-            normalized.contains("puddle") || normalized.contains("slippery") ->
-                AssistiveClass.PUDDLE_SLIPPERY
+            lower.contains("pothole") || lower.contains("open_trench") || lower.contains("trench") || lower.contains("manhole") || lower.contains("drain") ->
+                AssistiveClass.POTHOLE_OPEN_TRENCH
 
-            // 2. Head-level hazards (use word match on 'tree' so 'street' does not trigger tree branch)
-            normalized.contains("branch") || words.contains("tree") || words.contains("trees") || normalized.contains("foliage") ->
+            lower.contains("curb") || lower.contains("kerb") || lower.contains("curb_step") ->
+                AssistiveClass.CURB_STEP
+
+            // Head-level hazards
+            lower.contains("branch") || lower.contains("overhanging") || (lower.contains("tree") && !lower.contains("street")) ->
                 AssistiveClass.OVERHANGING_BRANCH
 
-            normalized.contains("sign") || normalized.contains("signboard") || normalized.contains("billboard") ->
+            lower.contains("signboard") || lower.contains("billboard") || lower.contains("sign") ->
                 AssistiveClass.PROTRUDING_SIGNBOARD
 
-            words.contains("wire") || words.contains("cable") || words.contains("cord") || normalized.contains("wires") ->
-                AssistiveClass.WIRE_CABLE_HAZARD
-
-            // 3. Dynamic vehicles
-            normalized.contains("motorcycle") || normalized.contains("scooter") || normalized.contains("rickshaw") ->
-                AssistiveClass.MOTORCYCLE_RICKSHAW
-
-            normalized.contains("bicycle") || words.contains("bike") || words.contains("cycle") ->
-                AssistiveClass.BICYCLE_ESCOOTER
-
-            words.contains("car") || words.contains("cars") || normalized.contains("truck") ||
-            normalized.contains("bus") || words.contains("van") || normalized.contains("vehicle") || normalized.contains("automobile") ->
-                AssistiveClass.CAR_VAN_TRUCK
-
-            // 4. Pedestrians (use exact word match for 'man' to avoid matching compound words)
-            normalized.contains("person") || normalized.contains("pedestrian") || normalized.contains("human") ||
-            normalized.contains("woman") || normalized.contains("child") || words.contains("man") || words.contains("men") ->
+            // Dynamic actors
+            lower.contains("pedestrian") || lower.contains("person") || lower.contains("human") ||
+            lower.contains("man") || lower.contains("woman") || lower.contains("child") ->
                 AssistiveClass.PEDESTRIAN_MOVING
 
-            // 5. Animals (use word matching on cat/dog/cow to avoid matching indicator, cattle, etc.)
-            words.contains("dog") || words.contains("dogs") || words.contains("cat") || words.contains("cats") ||
-            words.contains("cow") || words.contains("cows") || normalized.contains("cattle") ||
-            words.contains("animal") || words.contains("horse") ->
+            lower.contains("bicycle") || lower.contains("escooter") || lower.contains("bike") || lower.contains("cycle") ->
+                AssistiveClass.BICYCLE_ESCOOTER
+
+            lower.contains("motorcycle") || lower.contains("rickshaw") || lower.contains("moped") || lower.contains("auto") ->
+                AssistiveClass.MOTORCYCLE_RICKSHAW
+
+            lower.contains("car") || lower.contains("truck") || lower.contains("van") || lower.contains("bus") || lower.contains("vehicle") ->
+                AssistiveClass.CAR_VAN_TRUCK
+
+            lower.contains("dog") || lower.contains("cattle") || lower.contains("cow") || lower.contains("animal") || lower.contains("horse") ->
                 AssistiveClass.ANIMAL_DOG_CATTLE
 
-            // 6. Street furniture
-            normalized.contains("pole") || words.contains("lamp") || words.contains("post") ->
-                AssistiveClass.UTILITY_POLE
-
-            normalized.contains("fence") || normalized.contains("barrier") || normalized.contains("barricade") ->
-                AssistiveClass.BARRICADE_FENCE
-
-            words.contains("trash") || normalized.contains("dustbin") || words.contains("bin") || normalized.contains("waste") ->
-                AssistiveClass.DUSTBIN_RECEPTACLE
-
-            words.contains("door") || normalized.contains("entrance") || words.contains("gate") ->
-                AssistiveClass.DOOR_ENTRANCE
-
-            words.contains("wall") || normalized.contains("divider") || normalized.contains("median") ->
-                AssistiveClass.LOW_WALL_MEDIAN
+            // Street infrastructure
+            lower.contains("pole") || lower.contains("bollard") || lower.contains("lamp") || lower.contains("post") ->
+                AssistiveClass.POLE_BOLLARD
 
             else -> null
         }

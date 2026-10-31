@@ -102,7 +102,7 @@ class LiteRTDetector : ObstacleDetector {
         if (centerOcclusion > 40f && avgCenter < 40f) {
             obstacles.add(
                 DetectedObstacle(
-                    assistiveClass = AssistiveClass.LOW_WALL_MEDIAN,
+                    assistiveClass = AssistiveClass.GENERIC_OBSTACLE,
                     confidence = 0.94f,
                     boundingBox = BoundingBox(left = 0.28f, top = 0.30f, right = 0.72f, bottom = 0.90f),
                     timestampMs = timestampMs
@@ -113,7 +113,7 @@ class LiteRTDetector : ObstacleDetector {
             val isLeftSided = avgLeft > avgRight
             obstacles.add(
                 DetectedObstacle(
-                    assistiveClass = AssistiveClass.BARRICADE_FENCE,
+                    assistiveClass = AssistiveClass.GENERIC_OBSTACLE,
                     confidence = 0.86f,
                     boundingBox = if (isLeftSided) {
                         BoundingBox(left = 0.15f, top = 0.40f, right = 0.50f, bottom = 0.88f)
@@ -127,7 +127,7 @@ class LiteRTDetector : ObstacleDetector {
             // Dark pit, sudden downward drop, or trench in ground path
             obstacles.add(
                 DetectedObstacle(
-                    assistiveClass = AssistiveClass.POTHOLE_TRENCH,
+                    assistiveClass = AssistiveClass.POTHOLE_OPEN_TRENCH,
                     confidence = 0.89f,
                     boundingBox = BoundingBox(left = 0.30f, top = 0.65f, right = 0.70f, bottom = 0.95f),
                     timestampMs = timestampMs

@@ -66,7 +66,7 @@ class SpatialEnvironmentAnalyzerTest {
     fun testGroundContactDepthEstimator() {
         // Obstacle with ground contact near bottom of screen (close to user's feet)
         val closeObstacle = DetectedObstacle(
-            assistiveClass = AssistiveClass.POTHOLE_TRENCH,
+            assistiveClass = AssistiveClass.POTHOLE_OPEN_TRENCH,
             confidence = 0.92f,
             boundingBox = BoundingBox(0.4f, 0.6f, 0.6f, 0.95f) // bottom = 0.95
         )
@@ -107,7 +107,7 @@ class SpatialEnvironmentAnalyzerTest {
     fun testSpatialEnvironmentBlockedCorridor() {
         // Critical ground hazard right in the center walking path
         val pothole = DetectedObstacle(
-            assistiveClass = AssistiveClass.POTHOLE_TRENCH,
+            assistiveClass = AssistiveClass.POTHOLE_OPEN_TRENCH,
             confidence = 0.95f,
             boundingBox = BoundingBox(0.35f, 0.65f, 0.65f, 0.92f)
         )
@@ -132,7 +132,7 @@ class SpatialEnvironmentAnalyzerTest {
     fun testSpatialEnvironmentDetourRightWhenLeftIsObstructed() {
         // Obstacle on left side of corridor
         val leftObstacle = DetectedObstacle(
-            assistiveClass = AssistiveClass.BOLLARD,
+            assistiveClass = AssistiveClass.POLE_BOLLARD,
             confidence = 0.9f,
             boundingBox = BoundingBox(0.20f, 0.45f, 0.45f, 0.80f)
         )
@@ -145,7 +145,7 @@ class SpatialEnvironmentAnalyzerTest {
     @Test
     fun testSurfaceInferenceWithFootpathObjects() {
         val curb = DetectedObstacle(
-            assistiveClass = AssistiveClass.CURB_STEP_UP,
+            assistiveClass = AssistiveClass.CURB_STEP,
             confidence = 0.91f,
             boundingBox = BoundingBox(0.35f, 0.7f, 0.65f, 0.95f)
         )

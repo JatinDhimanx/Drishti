@@ -108,3 +108,35 @@ data class SpatialObstacleAnalysis(
     val groundContactY: Float
 )
 
+/**
+ * Geometric hazard type identified from geometry, depth, and ground plane analysis.
+ */
+enum class GeometricHazardType {
+    OBSTACLE,     // Protrusion above the ground plane in the walking corridor
+    DROPOFF,      // Sudden depth drop-off or discontinuity (stairs down, open trench, curb)
+    HEAD_HAZARD   // Obstruction in upper pedestrian volume (0.9m - 2.0m above ground)
+}
+
+/**
+ * Height classification of a geometric obstacle relative to ground plane.
+ */
+enum class HeightClass {
+    GROUND,   // Ground level / surface level (< 0.4m)
+    WAIST,    // Waist / torso level (0.4m - 1.2m)
+    HEAD      // Head / eye level (0.9m - 2.0m)
+}
+
+/**
+ * Geometry-first detected hazard produced by Layer 1.
+ */
+data class GeometricHazard(
+    val distanceMeters: Float,
+    val azimuthDegrees: Float,
+    val heightClass: HeightClass,
+    val type: GeometricHazardType,
+    val confidence: Float,
+    val boundingBox: BoundingBox,
+    val isPitchValid: Boolean = true
+)
+
+

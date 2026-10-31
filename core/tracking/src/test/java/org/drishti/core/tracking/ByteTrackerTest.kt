@@ -99,7 +99,7 @@ class ByteTrackerTest {
         var lastTracks: List<ByteTracklet> = emptyList()
         for (i in 0..4) {
             val det = DetectedObstacle(
-                assistiveClass = AssistiveClass.UTILITY_POLE,
+                assistiveClass = AssistiveClass.POLE_BOLLARD,
                 confidence = 0.80f,
                 boundingBox = staticBox
             )

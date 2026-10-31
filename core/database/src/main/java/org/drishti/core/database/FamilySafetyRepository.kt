@@ -57,6 +57,12 @@ class FamilySafetyRepository {
         }
     }
 
+    fun setContactSharingEnabled(contactId: Long, enabled: Boolean) {
+        _contacts.value = _contacts.value.map { contact ->
+            if (contact.id == contactId) contact.copy(isLocationSharingEnabled = enabled) else contact
+        }
+    }
+
     fun updateSharingInterval(interval: LocationSharingInterval) {
         _sharingStatus.value = _sharingStatus.value.copy(interval = interval)
     }
@@ -68,12 +74,18 @@ class FamilySafetyRepository {
         )
     }
 
-    fun recordLocationDispatch(lat: Double, lng: Double) {
+    fun recordLocationDispatch(lat: Double, lng: Double, summary: String = "") {
         _sharingStatus.value = _sharingStatus.value.copy(
             lastDispatchedTimestampMs = System.currentTimeMillis(),
             lastLatitude = lat,
-            lastLongitude = lng
+            lastLongitude = lng,
+            totalDispatchedCount = _sharingStatus.value.totalDispatchedCount + 1,
+            lastStatusMessage = summary
         )
+    }
+
+    fun updateStatusMessage(message: String) {
+        _sharingStatus.value = _sharingStatus.value.copy(lastStatusMessage = message)
     }
 
     fun getGoogleMapsLink(latitude: Double, longitude: Double): String {

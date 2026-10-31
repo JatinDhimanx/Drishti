@@ -143,10 +143,10 @@ class SpatialEnvironmentAnalyzer(
         val classes = detections.map { it.assistiveClass }
 
         return when {
-            classes.any { it == AssistiveClass.POTHOLE_TRENCH || it == AssistiveClass.PUDDLE_SLIPPERY } -> SurfaceType.UNEVEN_TERRAIN
+            classes.any { it == AssistiveClass.POTHOLE_OPEN_TRENCH } -> SurfaceType.UNEVEN_TERRAIN
             classes.any { it == AssistiveClass.CAR_VAN_TRUCK || it == AssistiveClass.MOTORCYCLE_RICKSHAW } -> SurfaceType.ROAD_SURFACE
-            classes.contains(AssistiveClass.STAIRS_UPWARD) || classes.contains(AssistiveClass.STAIRS_DOWNWARD) ||
-            classes.contains(AssistiveClass.CURB_STEP_UP) || classes.contains(AssistiveClass.CURB_STEP_DOWN) -> SurfaceType.WALKABLE_FOOTPATH
+            classes.contains(AssistiveClass.STAIRS_UP) || classes.contains(AssistiveClass.STAIRS_DOWN) ||
+            classes.contains(AssistiveClass.CURB_STEP) -> SurfaceType.WALKABLE_FOOTPATH
             else -> SurfaceType.WALKABLE_FOOTPATH
         }
     }

@@ -82,7 +82,7 @@ class CameraVisionManager(
             activeCamera?.cameraControl?.enableTorch(enabled)
             isTorchActive = enabled
             true
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             false
         }
     }
@@ -102,8 +102,9 @@ class CameraVisionManager(
         try {
             setTorchEnabled(false)
             cameraProvider?.unbindAll()
-        } catch (_: Exception) {}
+        } catch (e: Exception) {}
         cameraExecutor.shutdown()
     }
 }
+
 

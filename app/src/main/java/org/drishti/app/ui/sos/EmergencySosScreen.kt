@@ -203,7 +203,7 @@ fun EmergencySosScreen(
                     }
                     try {
                         context.startActivity(intent)
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) {}
                 }
                 .semantics {
                     contentDescription = "Trigger Emergency SOS. Broadcasts emergency alert and coordinates to all family contacts. Double tap to activate."
@@ -268,4 +268,5 @@ fun EmergencySosScreen(
         }
     }
 }
+
 

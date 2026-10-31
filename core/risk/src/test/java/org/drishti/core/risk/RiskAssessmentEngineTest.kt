@@ -33,7 +33,7 @@ class RiskAssessmentEngineTest {
     fun testGroundHazardInCenterCorridorYieldsCriticalThreat() {
         // Pothole directly in bottom-center corridor
         val pothole = DetectedObstacle(
-            assistiveClass = AssistiveClass.POTHOLE_TRENCH,
+            assistiveClass = AssistiveClass.POTHOLE_OPEN_TRENCH,
             confidence = 0.85f,
             boundingBox = BoundingBox(left = 0.35f, top = 0.65f, right = 0.65f, bottom = 0.95f)
         )
@@ -49,7 +49,7 @@ class RiskAssessmentEngineTest {
     fun testDistantStaticObstacleYieldsCautionOrWarning() {
         // Static pole on lateral edge
         val pole = DetectedObstacle(
-            assistiveClass = AssistiveClass.UTILITY_POLE,
+            assistiveClass = AssistiveClass.POLE_BOLLARD,
             confidence = 0.75f,
             boundingBox = BoundingBox(left = 0.80f, top = 0.20f, right = 0.95f, bottom = 0.50f)
         )
