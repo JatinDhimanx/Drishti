@@ -64,12 +64,14 @@ class WhitelistNamingEngine {
             det.confidence >= getCalibratedThreshold(det.assistiveClass)
         }
 
+        val matchedDetections = mutableSetOf<DetectedObstacle>()
+
         // 2. Pair each Geometric Hazard with the best overlapping Whitelist Detection
         geometricHazards.forEachIndexed { index, geoHazard ->
             val trackKey = (index + 1).toLong()
 
             // Find overlapping detection
-            val matchingDet = cleanWhitelistDetections.maxByOrNull { det ->
+            val matchingDet = cleanWhitelistDetections.filter { it !in matchedDetections }.maxByOrNull { det ->
                 YoloTensorParser.calculateIou(geoHazard.boundingBox, det.boundingBox)
             }
             val hasGoodOverlap = matchingDet != null &&
@@ -80,6 +82,7 @@ class WhitelistNamingEngine {
             val isCritical: Boolean
 
             if (hasGoodOverlap && matchingDet != null) {
+                matchedDetections.add(matchingDet)
                 candidateClass = matchingDet.assistiveClass
                 candidateConfidence = matchingDet.confidence
                 isCritical = candidateClass == AssistiveClass.STAIRS_DOWN ||
@@ -142,6 +145,49 @@ class WhitelistNamingEngine {
                         isPitchValid = geoHazard.isPitchValid,
                         geometricType = geoHazard.type,
                         heightClass = geoHazard.heightClass
+                    )
+                )
+            }
+        }
+
+        // 3. Ensure all clean camera detections (especially Persons & objects) are tracked even if not matched to geometricHazards
+        cleanWhitelistDetections.filter { it !in matchedDetections }.forEachIndexed { detIdx, det ->
+            val trackKey = 1000L + detIdx
+            val bot = det.boundingBox.bottom.coerceIn(0.1f, 0.98f)
+            val dist = (1.3f / kotlin.math.tan(Math.toRadians(15.0 + ((bot - 0.5) * 35.0)))).toFloat().coerceIn(0.4f, 6.0f)
+            val az = (det.boundingBox.centerX - 0.5f) * 60f
+            val isCritical = det.assistiveClass == AssistiveClass.PEDESTRIAN_MOVING ||
+                             det.assistiveClass == AssistiveClass.CAR_VAN_TRUCK ||
+                             dist <= 2.0f
+
+            val window = observationWindows.getOrPut(trackKey) { mutableListOf() }
+            window.add(
+                TrackObservation(
+                    timestampMs = currentTimestampMs,
+                    confirmedClass = det.assistiveClass,
+                    confidence = det.confidence,
+                    isCritical = isCritical
+                )
+            )
+            if (window.size > WINDOW_SIZE) {
+                window.removeAt(0)
+            }
+            window.removeAll { currentTimestampMs - it.timestampMs > 1200 }
+
+            if (window.isNotEmpty()) {
+                val clockPos = calculateClockPosition(az)
+                results.add(
+                    ConfirmedHazard(
+                        trackId = trackKey,
+                        assistiveClass = det.assistiveClass,
+                        distanceMeters = dist,
+                        azimuthDegrees = az,
+                        clockPosition = clockPos,
+                        confidence = det.confidence,
+                        boundingBox = det.boundingBox,
+                        isPitchValid = true,
+                        geometricType = GeometricHazardType.OBSTACLE,
+                        heightClass = if (det.assistiveClass == AssistiveClass.PEDESTRIAN_MOVING) HeightClass.HEAD else HeightClass.WAIST
                     )
                 )
             }

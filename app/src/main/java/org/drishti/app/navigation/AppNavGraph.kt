@@ -1,14 +1,18 @@
 package org.drishti.app.navigation
 
+import android.app.Activity
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.delay
+import org.drishti.app.notification.DrishtiNotificationManager
 import org.drishti.app.splash.SplashScreen
 import org.drishti.app.ui.about.AboutAccessibilityScreen
 import org.drishti.app.ui.ai.AiAssistanceScreen
@@ -76,9 +80,9 @@ fun AppNavGraph() {
         AppScreen.SPLASH -> {
             SplashScreen()
 
-            // Skip onboarding/permissions — go directly to dashboard after splash
+            // Display brand splash on app open then proceed directly to dashboard
             LaunchedEffect(Unit) {
-                delay(1500)
+                delay(1800)
                 currentScreen = AppScreen.DASHBOARD
             }
         }
@@ -94,6 +98,21 @@ fun AppNavGraph() {
         }
 
         AppScreen.DASHBOARD -> {
+            var lastExitBackPressTime by remember { mutableLongStateOf(0L) }
+            BackHandler(enabled = true) {
+                val now = System.currentTimeMillis()
+                if (now - lastExitBackPressTime < 2500L) {
+                    (context as? Activity)?.finish()
+                } else {
+                    lastExitBackPressTime = now
+                    hapticManager.vibrateClick()
+                    speechManager.speakGuidance(
+                        "App se bahar nikalne ke liye Home button dabayein, ya exit karne ke liye dobara back dabayein.",
+                        flush = true
+                    )
+                }
+            }
+
             HomeDashboardScreen(
                 onStartAiAssistance = {
                     activeRouteDestination = null
@@ -126,6 +145,17 @@ fun AppNavGraph() {
                 },
                 onDownloadMaps = {
                     currentScreen = AppScreen.LIVE_MAP_SELECTOR
+                },
+                onNotificationClick = {
+                    DrishtiNotificationManager.showStatusNotification(
+                        context = context,
+                        title = "Drishti Safety Active",
+                        message = "All offline assistance models and 2-meter collision guard are ready."
+                    )
+                    speechManager.speakGuidance(
+                        "Drishti Notification: Safety system active. All models ready.",
+                        flush = true
+                    )
                 }
             )
         }

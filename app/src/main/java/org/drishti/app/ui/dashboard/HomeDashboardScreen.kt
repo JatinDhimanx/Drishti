@@ -1,6 +1,7 @@
 package org.drishti.app.ui.dashboard
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -56,6 +57,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -65,7 +68,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.drishti.app.splash.DrishtiLogo
+import org.drishti.app.R
 
 // Design System Palette based on the reference UI
 private val DarkAppBackground = Color(0xFF0A0C12)
@@ -101,7 +104,8 @@ fun HomeDashboardScreen(
     onOpenAbout: () -> Unit,
     onSpeakDashboardIntro: () -> Unit,
     onOpenSavedPlaces: () -> Unit = onNavigateDestination,
-    onDownloadMaps: () -> Unit = onNavigateDestination
+    onDownloadMaps: () -> Unit = onNavigateDestination,
+    onNotificationClick: () -> Unit = onSpeakDashboardIntro
 ) {
     LaunchedEffect(Unit) {
         onSpeakDashboardIntro()
@@ -132,7 +136,7 @@ fun HomeDashboardScreen(
         ) {
             // 1. Top Bar Header
             DashboardTopBar(
-                onNotificationClick = { onSpeakDashboardIntro() },
+                onNotificationClick = onNotificationClick,
                 onSettingsClick = onOpenSettings
             )
 
@@ -242,25 +246,21 @@ private fun DashboardTopBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            DrishtiLogo(modifier = Modifier.size(46.dp, 30.dp))
-            Spacer(modifier = Modifier.width(10.dp))
-            Column {
-                Text(
-                    text = "Drishti",
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextWhite,
-                    letterSpacing = 0.5.sp,
-                    modifier = Modifier.semantics { heading() }
-                )
-                Text(
-                    text = "Your Offline AI Assistant",
-                    fontSize = 12.sp,
-                    color = TextSecondary,
-                    fontWeight = FontWeight.Normal
-                )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.semantics(mergeDescendants = true) {
+                heading()
+                contentDescription = "Drishti - Your Offline AI Assistant"
             }
+        ) {
+            Image(
+                painter = painterResource(id = R.drawable.drishti_splash_logo),
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .height(38.dp)
+                    .width(128.dp)
+            )
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

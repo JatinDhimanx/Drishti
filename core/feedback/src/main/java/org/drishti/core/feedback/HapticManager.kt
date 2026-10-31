@@ -53,6 +53,10 @@ class HapticManager(context: Context) {
         // Imminent static collision (<=2m): Solid continuous strong pulse
         val PATTERN_IMMINENT_STATIC_COLLISION_2M = longArrayOf(0, 320)
         val AMPLITUDES_IMMINENT_STATIC_COLLISION_2M = intArrayOf(0, 255)
+
+        // Emergency Screen-Off Alert: Intense, urgent prolonged pulses
+        val PATTERN_SCREEN_OFF_EMERGENCY = longArrayOf(0, 450, 150, 450, 150, 650, 150, 850)
+        val AMPLITUDES_SCREEN_OFF_EMERGENCY = intArrayOf(0, 255, 0, 255, 0, 255, 0, 255)
     }
 
     /**
@@ -83,6 +87,24 @@ class HapticManager(context: Context) {
      */
     fun vibrateStaticProximity() {
         vibrateImminentStaticCollision2M()
+    }
+
+    /**
+     * Emergency Screen Off Alert:
+     * Intense, urgent long vibrations when screen is accidentally locked or turned off.
+     */
+    fun vibrateScreenOffEmergencyAlert() {
+        if (!isHapticEnabled || vibrator == null || !vibrator.hasVibrator()) return
+        try { vibrator.cancel() } catch (_: Exception) {}
+        vibratePattern(PATTERN_SCREEN_OFF_EMERGENCY, AMPLITUDES_SCREEN_OFF_EMERGENCY)
+    }
+
+    /**
+     * Short haptic tap for warnings / notifications.
+     */
+    fun vibrateShortAlert() {
+        if (!isHapticEnabled || vibrator == null || !vibrator.hasVibrator()) return
+        vibratePattern(longArrayOf(0, 100), intArrayOf(0, 220))
     }
 
     /**

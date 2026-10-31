@@ -1,5 +1,6 @@
 package org.drishti.app.ui.about
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,6 +28,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -35,7 +38,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.drishti.app.splash.DrishtiLogo
+import org.drishti.app.R
 
 private val PureBlack = Color(0xFF000000)
 private val HighContrastYellow = Color(0xFFFFEB3B)
@@ -104,18 +107,18 @@ fun AboutAccessibilityScreen(
                 .padding(20.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                DrishtiLogo(modifier = Modifier.size(56.dp, 38.dp))
+                Image(
+                    painter = painterResource(id = R.drawable.drishti_splash_logo),
+                    contentDescription = "Drishti Logo",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.height(44.dp).width(120.dp)
+                )
                 Spacer(modifier = Modifier.width(16.dp))
                 Column {
                     Text(
-                        text = "DRISHTI",
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = TextWhite
-                    )
-                    Text(
                         text = "Version 1.0.0 (Offline Production)",
                         fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
                         color = SafetyCyan
                     )
                     Text(

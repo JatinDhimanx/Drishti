@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -34,6 +35,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -43,7 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.drishti.app.splash.DrishtiLogo
+import org.drishti.app.R
 import org.drishti.core.feedback.SpeechManager
 
 private val PureBlack = Color(0xFF000000)
@@ -113,16 +116,12 @@ fun OnboardingScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                DrishtiLogo(modifier = Modifier.size(36.dp, 24.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "DRISHTI",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextWhite
-                )
-            }
+            Image(
+                painter = painterResource(id = R.drawable.drishti_splash_logo),
+                contentDescription = "Drishti",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.height(30.dp).width(105.dp)
+            )
 
             Box(
                 modifier = Modifier

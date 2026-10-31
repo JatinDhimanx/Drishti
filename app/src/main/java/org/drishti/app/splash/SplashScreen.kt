@@ -9,6 +9,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -43,6 +45,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -56,6 +60,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.drishti.app.R
 
 // Drishti Brand Colors
 private val SplashBgDark = Color(0xFF07080A)
@@ -75,7 +80,7 @@ private val ProgressTrack = Color(0xFF34343A)
 fun SplashScreen(
     modifier: Modifier = Modifier
 ) {
-    // Fade-in animation for content
+    // Fade-in and gentle scale-in animation for content
     var startAnimation by remember { mutableStateOf(false) }
     val contentAlpha by animateFloatAsState(
         targetValue = if (startAnimation) 1f else 0f,
@@ -84,6 +89,15 @@ fun SplashScreen(
             easing = FastOutSlowInEasing
         ),
         label = "SplashFadeIn"
+    )
+
+    val contentScaleAnim by animateFloatAsState(
+        targetValue = if (startAnimation) 1f else 0.92f,
+        animationSpec = tween(
+            durationMillis = 850,
+            easing = FastOutSlowInEasing
+        ),
+        label = "SplashScale"
     )
 
     LaunchedEffect(Unit) {
@@ -98,6 +112,9 @@ fun SplashScreen(
                     colors = listOf(SplashBgCharcoal, SplashBgDark)
                 )
             )
+            .semantics {
+                contentDescription = "Drishti App Opening: See Beyond With Confidence"
+            }
     ) {
         // Subtle background light trails and ambient glow
         SplashBackground(
@@ -110,45 +127,32 @@ fun SplashScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.Center)
-                .padding(horizontal = 32.dp)
-                .alpha(contentAlpha),
+                .padding(horizontal = 28.dp)
+                .alpha(contentAlpha)
+                .scale(contentScaleAnim),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // Drishti Vision & Soundwave Logo
-            DrishtiLogo(
-                modifier = Modifier.size(width = 100.dp, height = 70.dp)
+            // Official Drishti Brand Logo (App Open)
+            Image(
+                painter = painterResource(id = R.drawable.drishti_splash_logo),
+                contentDescription = "Drishti Logo",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxWidth(0.85f)
+                    .height(110.dp)
             )
 
-            Spacer(modifier = Modifier.height(28.dp))
+            Spacer(modifier = Modifier.height(18.dp))
 
-            // App Name with highlighted accent "i"
+            // Tagline
             Text(
-                text = buildAnnotatedString {
-                    append("Drisht")
-                    withStyle(style = SpanStyle(color = PrimaryOrange)) {
-                        append("i")
-                    }
-                },
-                fontSize = 42.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.SansSerif,
-                color = TextWhite,
-                letterSpacing = 1.2.sp,
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Exact Tagline
-            Text(
-                text = "See Beyond\nWith Confidence",
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Normal,
+                text = "See Beyond With Confidence",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
                 fontFamily = FontFamily.SansSerif,
                 color = TextSecondary,
-                lineHeight = 24.sp,
-                letterSpacing = 0.5.sp,
+                letterSpacing = 0.8.sp,
                 textAlign = TextAlign.Center
             )
         }

@@ -1,8 +1,11 @@
 package org.drishti.app.ui.navigation
 
 import android.annotation.SuppressLint
+import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Paint
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -11,6 +14,8 @@ import android.hardware.SensorManager
 import android.location.Location
 import android.net.Uri
 import android.os.Looper
+import android.view.WindowManager
+import androidx.activity.compose.BackHandler
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -60,6 +65,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -152,6 +158,75 @@ fun LiveCameraNavScreen(
     var hasUserLocation by remember { mutableStateOf(false) }
     var compassHeading by remember { mutableFloatStateOf(0f) }
     var lastTurnHapticTime by remember { mutableLongStateOf(0L) }
+
+    // Keep screen awake while walking assistance is active
+    DisposableEffect(Unit) {
+        val window = (context as? Activity)?.window
+        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    // Screen-Off Emergency Alert Receiver: detects accidental screen power-off
+    DisposableEffect(context) {
+        val screenOffReceiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context?, intent: Intent?) {
+                if (intent?.action == Intent.ACTION_SCREEN_OFF) {
+                    hapticManager.vibrateScreenOffEmergencyAlert()
+                    speechManager.speakCritical("Chetavani! Phone band ho gaya hai. Drishti chalane ke liye screen on karein!")
+                    org.drishti.app.notification.DrishtiNotificationManager.showHazardAlertNotification(
+                        context,
+                        obstacleLabel = "Screen Band Ho Gayi",
+                        distanceMeters = 0.0f,
+                        guidance = "Phone unlock karein, Drishti navigation paused hai"
+                    )
+                }
+            }
+        }
+        val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
+        context.registerReceiver(screenOffReceiver, filter)
+        onDispose {
+            try {
+                context.unregisterReceiver(screenOffReceiver)
+            } catch (_: Exception) {}
+        }
+    }
+
+    // Accidental Exit Protection: Only exit if confirmed or via Home Button
+    var lastBackPressTime by remember { mutableLongStateOf(0L) }
+    BackHandler(enabled = true) {
+        val now = System.currentTimeMillis()
+        if (now - lastBackPressTime < 2500L) {
+            hapticManager.vibrateClick()
+            speechManager.speakGuidance("Navigation rok rahe hain.", flush = true)
+            onStopNavigation()
+        } else {
+            lastBackPressTime = now
+            hapticManager.vibrateShortAlert()
+            speechManager.speakGuidance(
+                "App se bahar aane ke liye Home button dabayein, ya navigation rokne ke liye dobara back dabayein.",
+                flush = true
+            )
+        }
+    }
+
+    // Active Walking Assistance Notification
+    DisposableEffect(context, activeRouteDestination) {
+        val destinationTitle = if (activeRouteDestination != null) {
+            "Navigating to ${activeRouteDestination.label}"
+        } else {
+            "Drishti Walking Assistance"
+        }
+        org.drishti.app.notification.DrishtiNotificationManager.showOngoingNavigationNotification(
+            context = context,
+            title = destinationTitle,
+            message = "AI scanning active. 2-meter obstacle corridor & collision guard running."
+        )
+        onDispose {
+            org.drishti.app.notification.DrishtiNotificationManager.cancelOngoingNavigationNotification(context)
+        }
+    }
 
     // 1. Setup GPS Location Updates
     DisposableEffect(context) {
@@ -478,38 +553,38 @@ fun LiveCameraNavScreen(
                                             criticalOrBlockedEntity.isVehicle && criticalOrBlockedEntity.isApproaching -> {
                                                 if (isHi) "Rukiye! Gadi aa rahi hai!" else "Stop! Vehicle approaching!"
                                             }
-                                            criticalOrBlockedEntity.isPedestrian && criticalOrBlockedEntity.isApproachingUser -> {
+                                            criticalOrBlockedEntity.isPedestrian -> {
                                                 val side = if (criticalOrBlockedEntity.spatialZone == "Left") "daayein chalein" else "baayein chalein"
                                                 val sideEn = if (criticalOrBlockedEntity.spatialZone == "Left") "step right" else "step left"
-                                                if (isHi) "Insaan aa raha, $side." else "Person approaching, $sideEn."
+                                                if (isHi) "Insaan 2 meter ke dayre mein hai, $side." else "Person within 2 meters, $sideEn."
                                             }
                                             criticalOrBlockedEntity.distanceMeters <= 2.0f -> {
                                                 val side = if (criticalOrBlockedEntity.spatialZone == "Left") "daayein chalein" else "baayein chalein"
                                                 val sideEn = if (criticalOrBlockedEntity.spatialZone == "Left") "step right" else "step left"
-                                                if (isHi) "${criticalOrBlockedEntity.hindiName} samne, $side." else "${criticalOrBlockedEntity.englishName} ahead, $sideEn."
+                                                if (isHi) "Rukiye! 2 meter par rukaawat hai, $side." else "Stop! Obstacle within 2 meters, $sideEn."
                                             }
                                             else -> {
-                                                if (isHi) "Rukiye! Aage turant khatra hai." else "Stop! Immediate hazard ahead."
+                                                if (isHi) "Rukiye! Aage khatra hai." else "Stop! Hazard ahead."
                                             }
                                         }
 
                                         lastAlertText = warningSpeech
 
-                                        if (!isStoppedByHazard || (now - lastHazardAnnounceTime > 2200L)) {
+                                        if (!isStoppedByHazard || (now - lastHazardAnnounceTime > 2000L)) {
                                             isStoppedByHazard = true
                                             lastHazardAnnounceTime = now
                                             lastSpokenTime = now
                                             lastSpokenAction = SuggestedAction.EMERGENCY_STOP
 
-                                            // Trigger distinct 2-meter vibration pattern
-                                            if (criticalOrBlockedEntity.isMoving && criticalOrBlockedEntity.isApproachingUser && criticalOrBlockedEntity.distanceMeters <= 2.0f) {
-                                                hapticManager.vibrateApproachingHazard2M()
-                                            } else if (!criticalOrBlockedEntity.isMoving && criticalOrBlockedEntity.distanceMeters <= 2.0f) {
-                                                hapticManager.vibrateImminentStaticCollision2M()
+                                            // STRICT 2-METER VIBRATION RULE: Vibrate only when in 2-meter proximity
+                                            if (criticalOrBlockedEntity.distanceMeters <= 2.0f) {
+                                                if (criticalOrBlockedEntity.isPedestrian || criticalOrBlockedEntity.isApproachingUser) {
+                                                    hapticManager.vibrateApproachingHazard2M()
+                                                } else {
+                                                    hapticManager.vibrateImminentStaticCollision2M()
+                                                }
                                             } else if (criticalOrBlockedEntity.isStairsDownward || criticalOrBlockedEntity.isPotholeOrDrain) {
                                                 hapticManager.vibrateDropOff()
-                                            } else {
-                                                hapticManager.vibrateCriticalStop()
                                             }
 
                                             speechManager.speakCritical(warningSpeech)
@@ -565,10 +640,12 @@ fun LiveCameraNavScreen(
                                             if (lastSpokenAction != action || (now - lastSpokenTime > 3500L)) {
                                                 lastSpokenTime = now
                                                 lastSpokenAction = action
-                                                if (action == SuggestedAction.TURN_LEFT) {
-                                                    hapticManager.vibrateTurnLeft()
-                                                } else {
-                                                    hapticManager.vibrateTurnRight()
+                                                if (steerEntity.distanceMeters <= 2.0f) {
+                                                    if (action == SuggestedAction.TURN_LEFT) {
+                                                        hapticManager.vibrateTurnLeft()
+                                                    } else {
+                                                        hapticManager.vibrateTurnRight()
+                                                    }
                                                 }
                                                 speechManager.speakGuidance(steerMsg)
                                             }
@@ -667,55 +744,56 @@ fun LiveCameraNavScreen(
                     style = Paint.Style.FILL
                 }
 
-                // Render ALL detected objects so nothing is hidden from the user/companion
+                // Render ALL detected objects with proper outline bounding boxes
                 allDetectedEntities.forEach { entity ->
                     val box = entity.boundingBox
-                    val boxColor = when (entity.threatLevel) {
-                        ThreatLevel.CRITICAL -> CriticalRed
-                        ThreatLevel.WARNING -> WarningOrange
-                        ThreatLevel.CAUTION -> HighContrastYellow
-                        ThreatLevel.ADVISORY -> SafetyCyan
-                        ThreatLevel.NONE -> Color(0x66AAAAAA) // Dim gray for safe background objects
+                    val isWithin2Meters = entity.distanceMeters <= 2.0f
+
+                    // Proper outline styling: Red if <= 2m, Vibrant Cyan for persons, Orange for other objects
+                    val boxColor = when {
+                        isWithin2Meters -> CriticalRed
+                        entity.isPedestrian -> Color(0xFF00E5FF) // Crisp Cyan for Persons
+                        entity.threatLevel == ThreatLevel.CRITICAL -> CriticalRed
+                        entity.threatLevel == ThreatLevel.WARNING -> WarningOrange
+                        entity.threatLevel == ThreatLevel.CAUTION -> HighContrastYellow
+                        else -> Color(0xFFFF9100)
                     }
-                    val strokeWidth = if (entity.threatLevel == ThreatLevel.NONE) 2.dp else 4.dp
+                    val strokeWidth = if (isWithin2Meters) 5.dp else if (entity.isPedestrian) 4.5.dp else 3.5.dp
 
                     val left = box.left * w
                     val top = box.top * h
                     val right = box.right * w
                     val bottom = box.bottom * h
 
-                    // Outline
-                    drawRect(
+                    // Draw clean outline
+                    drawRoundRect(
                         color = boxColor,
                         topLeft = Offset(left, top),
                         size = Size(right - left, bottom - top),
+                        cornerRadius = CornerRadius(8f, 8f),
                         style = Stroke(width = strokeWidth.toPx())
                     )
 
-                    // Tag above bounding box (for threats or close objects <= 3m)
-                    if (entity.threatLevel != ThreatLevel.NONE || entity.distanceMeters <= 3.0f) {
-                        val distFt = (entity.distanceFeet * 10).toInt() / 10.0
-                        val speedText = if (entity.approachSpeedMps > 0.4f) String.format(" • %.1f m/s", entity.approachSpeedMps) else ""
-                        val icon = if (entity.isPedestrian) "🧍 " else if (entity.isVehicle) "🚗 " else ""
-                        val tagText = "$icon${entity.hindiName} • ${distFt}ft (${entity.movementDirection}$speedText)"
-
-                        val tagWidth = textPaint.measureText(tagText) + 24f
-                        val tagTop = (top - 54f).coerceAtLeast(10f)
+                    // NO object name displayed above box ("lekin uper ye mention nahi hona chaiye ki wo kya hai")
+                    // If within 2 meters, show only distance badge without any name/label
+                    if (isWithin2Meters) {
+                        val distBadge = String.format("%.1fm", entity.distanceMeters)
+                        val badgeWidth = textPaint.measureText(distBadge) + 24f
+                        val badgeTop = (top - 46f).coerceAtLeast(10f)
 
                         drawContext.canvas.nativeCanvas.drawRoundRect(
                             left,
-                            tagTop,
-                            left + tagWidth,
-                            tagTop + 50f,
-                            12f,
-                            12f,
+                            badgeTop,
+                            left + badgeWidth,
+                            badgeTop + 40f,
+                            8f,
+                            8f,
                             bgPaint
                         )
-
                         drawContext.canvas.nativeCanvas.drawText(
-                            tagText,
+                            distBadge,
                             left + 12f,
-                            tagTop + 36f,
+                            badgeTop + 28f,
                             textPaint
                         )
                     }
