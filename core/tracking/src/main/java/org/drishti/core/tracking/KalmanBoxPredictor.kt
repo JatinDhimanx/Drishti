@@ -4,7 +4,8 @@ import org.drishti.core.model.BoundingBox
 
 /**
  * Constant-Velocity Alpha-Beta Kalman Box Predictor for Drishti.
- * Provides high-speed, zero-allocation box tracking, smoothing, and forward prediction.
+ * Provides high-speed, zero-allocation box tracking, smoothing, and forward prediction
+ * with variable delta-time (dt) compensation and runaway velocity clamping.
  */
 class KalmanBoxPredictor(
     initialBox: BoundingBox,
@@ -36,7 +37,7 @@ class KalmanBoxPredictor(
      * Advance state forward by time delta dt (seconds).
      */
     fun predict(dtSeconds: Float): BoundingBox {
-        val dt = dtSeconds.coerceIn(0.01f, 0.5f)
+        val dt = dtSeconds.coerceIn(0.016f, 0.3f)
         left += vLeft * dt
         top += vTop * dt
         right += vRight * dt
@@ -47,9 +48,10 @@ class KalmanBoxPredictor(
 
     /**
      * Update filter state with new measured observation.
+     * Compensates for fluctuating camera frame delivery intervals.
      */
     fun update(measuredBox: BoundingBox, dtSeconds: Float) {
-        val dt = dtSeconds.coerceIn(0.01f, 0.5f)
+        val dt = dtSeconds.coerceIn(0.016f, 0.3f)
 
         // Residuals
         val resLeft = measuredBox.left - left
@@ -63,17 +65,23 @@ class KalmanBoxPredictor(
         right += alpha * resRight
         bottom += alpha * resBottom
 
-        // Velocity updates
+        // Velocity updates scaled by variable dt
         vLeft += (beta / dt) * resLeft
         vTop += (beta / dt) * resTop
         vRight += (beta / dt) * resRight
         vBottom += (beta / dt) * resBottom
 
-        // Damping to prevent runaway velocities
-        vLeft *= 0.92f
-        vTop *= 0.92f
-        vRight *= 0.92f
-        vBottom *= 0.92f
+        // Clamp velocities to prevent runaway box deformation during sudden jumps
+        vLeft = vLeft.coerceIn(-1.5f, 1.5f)
+        vTop = vTop.coerceIn(-1.5f, 1.5f)
+        vRight = vRight.coerceIn(-1.5f, 1.5f)
+        vBottom = vBottom.coerceIn(-1.5f, 1.5f)
+
+        // Velocity damping to prevent oscillation
+        val decay = 0.92f
+        vLeft *= decay
+        vTop *= decay
+        vRight *= decay
+        vBottom *= decay
     }
 }
-

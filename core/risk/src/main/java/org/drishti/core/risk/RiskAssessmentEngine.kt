@@ -51,7 +51,14 @@ class RiskAssessmentEngine(
             val zone = spatialAnalyzer.corridor.classifyZone(detection.boundingBox)
 
             // 4. Determine Threat Level
-            val threatLevel = evaluateThreatLevel(detection, estimatedDistance, azimuth)
+            val threatLevel = evaluateThreatLevel(
+                detection = detection,
+                distance = estimatedDistance,
+                azimuth = azimuth,
+                isMoving = false,
+                isApproaching = false,
+                closingSpeed = 0f
+            )
 
             TrackedObstacle(
                 trackId = trackId,
@@ -64,7 +71,10 @@ class RiskAssessmentEngine(
                 lastAnnouncedTimestampMs = announcedCooldowns[trackId] ?: 0L,
                 spatialZone = zone,
                 distanceTier = depthResult.distanceTier,
-                isMetricCalibrated = depthResult.isMetricCalibrated
+                isMetricCalibrated = depthResult.isMetricCalibrated,
+                isMoving = false,
+                isApproachingUser = false,
+                relativeClosingSpeed = 0.0f
             )
         }.sortedByDescending { it.threatLevel.priority }
     }
@@ -147,29 +157,84 @@ class RiskAssessmentEngine(
         return Pair(azimuth, clock)
     }
 
+    /**
+     * Evaluates strict 2-Meter Collision & Motion Rule for haptic feedback.
+     * Rule 1 — Static & Far (>2.0m) or Off-Path: NEVER vibrate.
+     * Rule 2 — Approaching Dynamic Object <= 2.0m: VIBRATE.
+     * Rule 3 — Imminent User Collision with Static Object <= 2.0m: VIBRATE only if in path and closing.
+     */
+    fun shouldVibrate(tracked: TrackedObstacle): Boolean {
+        // Critical ground drop-offs or trenches warrant vibration within 2.5m
+        if (tracked.obstacle.assistiveClass.category.isGroundTrap && tracked.estimatedDistanceMeters <= 2.5f) {
+            return true
+        }
+        // Head-level hazard within 2.0m warrants immediate vibration
+        if (tracked.obstacle.assistiveClass.category.isHeadHazard && tracked.estimatedDistanceMeters <= 2.0f) {
+            return true
+        }
+
+        val inCentralCorridor = spatialAnalyzer.corridor.isInCentralCollisionCorridor(tracked.obstacle.boundingBox)
+
+        // Rule 1: Static & Far (> 2.0m) or Off-Path = NO VIBRATION
+        if (!tracked.isMoving && (tracked.estimatedDistanceMeters > 2.0f || !inCentralCorridor)) {
+            return false
+        }
+
+        // Rule 2: Approaching Dynamic Object at <= 2.0m = VIBRATE
+        if (tracked.isMoving && tracked.isApproachingUser && tracked.estimatedDistanceMeters <= 2.0f) {
+            return true
+        }
+
+        // Rule 3: Imminent User Collision with Static Object at <= 2.0m = VIBRATE
+        if (!tracked.isMoving && inCentralCorridor && tracked.estimatedDistanceMeters <= 2.0f && tracked.relativeClosingSpeed > 0.20f) {
+            return true
+        }
+
+        return false
+    }
+
     private fun evaluateThreatLevel(
         detection: DetectedObstacle,
         distance: Float,
-        azimuth: Float
+        azimuth: Float,
+        isMoving: Boolean = false,
+        isApproaching: Boolean = false,
+        closingSpeed: Float = 0.0f
     ): ThreatLevel {
-        val isCentralCorridor = azimuth in -20f..20f
-        val isGroundHazard = detection.assistiveClass.category == AssistiveClass.HazardCategory.GROUND_HAZARD
-        val isHeadHazard = detection.assistiveClass.category == AssistiveClass.HazardCategory.HEAD_LEVEL
+        val isCentralCorridor = spatialAnalyzer.corridor.isInCentralCollisionCorridor(detection.boundingBox) || azimuth in -15f..15f
+        val isGroundHazard = detection.assistiveClass.category.isGroundTrap
+        val isHeadHazard = detection.assistiveClass.category.isHeadHazard
 
-        return when {
-            // Drop-offs or head obstacles close in walking path -> Critical
-            isCentralCorridor && (distance < 1.6f || (isGroundHazard && distance < 2.5f) || (isHeadHazard && distance < 2.0f)) -> {
-                ThreatLevel.CRITICAL
-            }
-            // Approaching hazards within 3.5m in corridor -> Caution
-            isCentralCorridor && distance < 3.8f -> {
-                ThreatLevel.CAUTION
-            }
-            // Peripheral or farther obstacles -> Advisory
-            distance < 6.0f -> {
-                ThreatLevel.ADVISORY
-            }
-            else -> ThreatLevel.NONE
+        // Rule 2: Approaching dynamic hazard <= 2.0m -> Immediate CRITICAL
+        if (isMoving && isApproaching && distance <= 2.0f) {
+            return ThreatLevel.CRITICAL
+        }
+
+        // Rule 3: Imminent collision with static object in central path <= 2.0m -> CRITICAL
+        if (!isMoving && isCentralCorridor && distance <= 2.0f && closingSpeed > 0.20f) {
+            return ThreatLevel.CRITICAL
+        }
+
+        // Drop-offs or head obstacles close in walking path -> Critical
+        if (isCentralCorridor && (distance < 1.6f || (isGroundHazard && distance < 2.5f) || (isHeadHazard && distance < 2.0f))) {
+            return ThreatLevel.CRITICAL
+        }
+
+        // Approaching hazards within 3.5m in corridor -> Caution
+        if (isCentralCorridor && distance < 3.8f) {
+            return ThreatLevel.CAUTION
+        }
+
+        // Rule 1: Static & Far (> 2.0m) or Off-Path -> ADVISORY / LOW (rendered, but never vibrate)
+        if (!isMoving && (distance > 2.0f || !isCentralCorridor)) {
+            return ThreatLevel.ADVISORY
+        }
+
+        // Peripheral or farther obstacles -> Advisory
+        return if (distance < 6.0f) {
+            ThreatLevel.ADVISORY
+        } else {
+            ThreatLevel.NONE
         }
     }
 

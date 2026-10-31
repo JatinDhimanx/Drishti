@@ -102,4 +102,12 @@ class VoiceGuideManager(
             speechManager.speakGuidance(hazardText, flush = false)
         }
     }
+
+    /**
+     * Immediate <=2.0m Threat Alert: Flushes the speech queue and speaks a crisp 3-4 word
+     * alert with escape direction without blocking other sounds.
+     */
+    fun announceImmediate2MThreat(threatSpeech: String) {
+        speechManager.speakCritical(threatSpeech)
+    }
 }

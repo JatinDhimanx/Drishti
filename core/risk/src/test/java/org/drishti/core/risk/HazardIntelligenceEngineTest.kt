@@ -216,5 +216,89 @@ class HazardIntelligenceEngineTest {
         assertEquals("", assessments.first().alertSpeech)
         assertFalse(engine.shouldTriggerAlert(assessments.first(), assessments))
     }
+
+    @Test
+    fun testRule1StaticAndFarOrOffPathDoesNotVibrate() {
+        // Static pole at 2.5m (farther than 2m)
+        val staticFarPole = createTracklet(
+            id = 70L,
+            itemClass = AssistiveClass.POLE_BOLLARD,
+            box = BoundingBox(0.45f, 0.40f, 0.55f, 0.70f),
+            distanceMeters = 2.5f,
+            motionState = MotionState.STATIONARY,
+            pathTrajectory = PathTrajectory.IN_PATH_DIRECTLY
+        )
+        staticFarPole.isMoving = false
+        staticFarPole.relativeClosingSpeed = 0f
+
+        val assessments = engine.evaluateHazards(listOf(staticFarPole))
+        val assessment = assessments.first()
+        // Rule 1: Static > 2m -> NEVER vibrate
+        assertFalse("Static object > 2.0m must never trigger vibration", assessment.requiresImmediateHaptic)
+
+        // Static object <= 2m but OUTSIDE corridor
+        val staticOffPathBox = createTracklet(
+            id = 71L,
+            itemClass = AssistiveClass.POLE_BOLLARD,
+            box = BoundingBox(0.05f, 0.40f, 0.15f, 0.70f), // lateral edge
+            distanceMeters = 1.5f,
+            motionState = MotionState.STATIONARY,
+            pathTrajectory = PathTrajectory.OUTSIDE_PATH
+        )
+        staticOffPathBox.isMoving = false
+        staticOffPathBox.relativeClosingSpeed = 0f
+
+        val assessments2 = engine.evaluateHazards(listOf(staticOffPathBox))
+        assertFalse("Static object outside central path must never trigger vibration", assessments2.first().requiresImmediateHaptic)
+    }
+
+    @Test
+    fun testRule2ApproachingDynamicObjectWithin2MVibrates() {
+        val approachingPerson = createTracklet(
+            id = 80L,
+            itemClass = AssistiveClass.PEDESTRIAN_MOVING,
+            box = BoundingBox(0.42f, 0.30f, 0.58f, 0.85f),
+            distanceMeters = 1.8f,
+            motionState = MotionState.APPROACHING,
+            pathTrajectory = PathTrajectory.IN_PATH_DIRECTLY,
+            ttc = 1.5f
+        )
+        approachingPerson.isMoving = true
+        approachingPerson.isApproachingUser = true
+        approachingPerson.relativeClosingSpeed = 1.2f
+
+        val assessments = engine.evaluateHazards(listOf(approachingPerson))
+        val assessment = assessments.first()
+
+        assertTrue("Approaching person <= 2m must trigger immediate haptic", assessment.requiresImmediateHaptic)
+        assertTrue("Must be classified as approaching dynamic 2M hazard", assessment.isApproachingDynamic2M)
+        assertTrue("Speech must be short actionable warning", assessment.alertSpeech.contains("Insaan aa raha") || assessment.alertSpeech.contains("Person approaching"))
+    }
+
+    @Test
+    fun testRule3ImminentStaticCollisionWithin2MVibratesWhenClosing() {
+        val inPathBollard = createTracklet(
+            id = 90L,
+            itemClass = AssistiveClass.POLE_BOLLARD,
+            box = BoundingBox(0.45f, 0.45f, 0.55f, 0.85f),
+            distanceMeters = 1.7f,
+            motionState = MotionState.STATIONARY,
+            pathTrajectory = PathTrajectory.IN_PATH_DIRECTLY
+        )
+        inPathBollard.isMoving = false
+        inPathBollard.relativeClosingSpeed = 1.1f // User walking into it at 1.1 m/s
+
+        val assessments = engine.evaluateHazards(listOf(inPathBollard))
+        val assessment = assessments.first()
+
+        assertTrue("Imminent static collision <= 2m with closing speed must vibrate", assessment.requiresImmediateHaptic)
+        assertTrue("Must be classified as imminent static collision 2M", assessment.isImminentStaticCollision2M)
+
+        // When user is standing still (relativeClosingSpeed = 0), no collision is imminent
+        inPathBollard.relativeClosingSpeed = 0.0f
+        val assessmentsStationary = engine.evaluateHazards(listOf(inPathBollard))
+        assertFalse("Stationary object when user is not closing in must not trigger collision vibration",
+            assessmentsStationary.first().isImminentStaticCollision2M)
+    }
 }
 

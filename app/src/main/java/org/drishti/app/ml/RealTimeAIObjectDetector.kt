@@ -16,6 +16,7 @@ import com.google.mlkit.vision.objects.ObjectDetector
 import com.google.mlkit.vision.objects.defaults.ObjectDetectorOptions
 import org.drishti.core.inference.AssistiveTaxonomyMapper
 import org.drishti.core.inference.ConfirmedHazard
+import org.drishti.core.inference.LiteRTDetector
 import org.drishti.core.inference.WhitelistNamingEngine
 import org.drishti.core.model.AssistiveClass
 import org.drishti.core.model.BoundingBox
@@ -54,7 +55,17 @@ data class DebugMetrics(
     val isPitchValid: Boolean = true,
     val averageLuma: Float = 128f,
     val corridorStatus: String = "CLEAR",
-    val activeTrackCount: Int = 0
+    val activeTrackCount: Int = 0,
+    val framesIn: Long = 0,
+    val rejectedDark: Long = 0,
+    val rejectedPitch: Long = 0,
+    val mlBoxes: Int = 0,
+    val afterBlacklist: Int = 0,
+    val whitelistCandidates: Int = 0,
+    val geoHazards: Int = 0,
+    val confirmed: Int = 0,
+    val tracked: Int = 0,
+    val alertsSpoken: Int = 0
 )
 
 data class RecognizedEntity(
@@ -68,6 +79,10 @@ data class RecognizedEntity(
     val approachSpeedMps: Float, // Positive = closing in, negative = moving away
     val isApproaching: Boolean,
     val isStationary: Boolean,
+    val isMoving: Boolean = false,
+    val isApproachingUser: Boolean = false,
+    val relativeClosingSpeed: Float = 0.0f,
+    val inCentralCorridor: Boolean = false,
     val timeToCollisionSec: Float?,
     val clockPosition: Int,
     val spatialZone: String,      // "Left", "Center", "Right"
@@ -80,8 +95,13 @@ data class RecognizedEntity(
     val isOverheadObstacle: Boolean,
     val threatLevel: ThreatLevel,
     val suggestedAction: SuggestedAction,
-    val alertSpeech: String = ""
+    val alertSpeech: String = "",
+    val requiresImmediateHaptic: Boolean = false
 )
+
+/** True for static physical blockers that don't pose danger unless user walks into them. */
+val RecognizedEntity.isImmovableStatic: Boolean
+    get() = !isVehicle && !isPedestrian && !isStairsDownward && !isPotholeOrDrain && !isOverheadObstacle
 
 /**
  * Drishti 3-Layer Real-Time Perception Pipeline.
@@ -91,6 +111,9 @@ data class RecognizedEntity(
  * Layer 3 — ByteTrack-Lite Tracking & Hazard Intelligence (Majority voting, TTC, 4s cooldown, safe failure mode).
  */
 class RealTimeAIObjectDetector : SensorEventListener {
+
+    // On-device LiteRT Hardware Accelerated Detector
+    val liteRtDetector = LiteRTDetector()
 
     // Layer 1: Geometry Engine
     private val geometryEngine = GeometryObstacleEngine()
@@ -117,8 +140,52 @@ class RealTimeAIObjectDetector : SensorEventListener {
     // Latency & Health Watchdog
     private var slowInferenceStreak = 0
     private var isSystemDegraded = false
+    private var framesInCount = 0L
+    private var rejectedDarkCount = 0L
+    private var rejectedPitchCount = 0L
+    private var alertsSpokenCount = 0
     var latestDebugMetrics: DebugMetrics = DebugMetrics()
         private set
+
+    data class RawBox(
+        val box: BoundingBox,
+        val label: String,
+        val confidence: Float
+    )
+
+    companion object {
+        /**
+         * Extracts whitelist candidates from per-box labels ONLY.
+         * Scene labels are completely ignored: they never name or veto a box.
+         * Blacklist applies only to that box's own label.
+         * If the box has no trusted whitelist label -> falls back to GENERIC_OBSTACLE.
+         */
+        fun extractWhitelistCandidatesFromBoxes(
+            rawBoxes: List<RawBox>,
+            now: Long
+        ): List<DetectedObstacle> {
+            return rawBoxes.map { rawBox ->
+                val label = rawBox.label.trim()
+                val isBlacklisted = AssistiveClass.isBlacklisted(label)
+                val mappedClass = if (isBlacklisted || label.isEmpty()) {
+                    AssistiveClass.GENERIC_OBSTACLE
+                } else {
+                    AssistiveTaxonomyMapper.fromLabelText(label) ?: AssistiveClass.GENERIC_OBSTACLE
+                }
+                val finalConf = if (mappedClass == AssistiveClass.GENERIC_OBSTACLE) {
+                    rawBox.confidence.coerceAtLeast(0.50f)
+                } else {
+                    rawBox.confidence
+                }
+                DetectedObstacle(
+                    assistiveClass = mappedClass,
+                    confidence = finalConf,
+                    boundingBox = rawBox.box,
+                    timestampMs = now
+                )
+            }
+        }
+    }
 
     init {
         val objectOptions = ObjectDetectorOptions.Builder()
@@ -139,11 +206,9 @@ class RealTimeAIObjectDetector : SensorEventListener {
         if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR) {
             val rotationMatrix = FloatArray(9)
             SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-            val orientation = FloatArray(3)
-            SensorManager.getOrientation(rotationMatrix, orientation)
-            // Pitch in degrees: orientation[1] is pitch (-pi/2 to pi/2)
-            val pitchDeg = Math.toDegrees(orientation[1].toDouble()).toFloat()
-            currentDevicePitch = pitchDeg
+            // Bug 1 fix: Compute camera depression angle from rotation matrix R[8]
+            // 0° = looking straight ahead, + = looking down towards ground
+            currentDevicePitch = GeometryObstacleEngine.computeDepressionDegrees(rotationMatrix)
         }
     }
 
@@ -160,6 +225,7 @@ class RealTimeAIObjectDetector : SensorEventListener {
         imageProxy: ImageProxy,
         onResult: (
             entities: List<RecognizedEntity>,
+            allEntities: List<RecognizedEntity>,
             labels: List<String>,
             isDarkOrCovered: Boolean,
             degradedNotice: String?
@@ -176,6 +242,7 @@ class RealTimeAIObjectDetector : SensorEventListener {
             return
         }
 
+        framesInCount++
         val startTimestamp = System.currentTimeMillis()
 
         // 1. HARDWARE LUMINANCE CHECK: Detect Dark Scene or Covered Camera Lens
@@ -183,9 +250,20 @@ class RealTimeAIObjectDetector : SensorEventListener {
         val isDarkOrCovered = avgLuminance < 22.0f
 
         if (isDarkOrCovered) {
+            rejectedDarkCount++
+            latestDebugMetrics = DebugMetrics(
+                currentPitchDeg = currentDevicePitch,
+                isPitchValid = geometryEngine.isPitchSafe(currentDevicePitch),
+                averageLuma = avgLuminance,
+                corridorStatus = "DEGRADED_DARK",
+                framesIn = framesInCount,
+                rejectedDark = rejectedDarkCount,
+                rejectedPitch = rejectedPitchCount,
+                alertsSpoken = alertsSpokenCount
+            )
             whitelistEngine.reset()
             tracker.clear()
-            onResult(emptyList(), emptyList(), true, "System degraded, use cane carefully")
+            onResult(emptyList(), emptyList(), emptyList(), true, "System degraded, use cane carefully")
             imageProxy.close()
             return
         }
@@ -193,8 +271,19 @@ class RealTimeAIObjectDetector : SensorEventListener {
         // 2. DEVICE PITCH CHECK: Wrong-Distance Tilt Protection (|pitch| > 40°)
         val isPitchSafe = geometryEngine.isPitchSafe(currentDevicePitch)
         if (!isPitchSafe) {
+            rejectedPitchCount++
+            latestDebugMetrics = DebugMetrics(
+                currentPitchDeg = currentDevicePitch,
+                isPitchValid = false,
+                averageLuma = avgLuminance,
+                corridorStatus = "UNSAFE_TILT",
+                framesIn = framesInCount,
+                rejectedDark = rejectedDarkCount,
+                rejectedPitch = rejectedPitchCount,
+                alertsSpoken = alertsSpokenCount
+            )
             val notice = if (hazardEngine.userLanguage == "hi") "Phone ko seedha pakdein" else "Hold phone upright"
-            onResult(emptyList(), emptyList(), false, notice)
+            onResult(emptyList(), emptyList(), emptyList(), false, notice)
             imageProxy.close()
             return
         }
@@ -206,16 +295,14 @@ class RealTimeAIObjectDetector : SensorEventListener {
         val imageWidth = if (rotation == 90 || rotation == 270) mediaImage.height.toFloat() else mediaImage.width.toFloat()
         val imageHeight = if (rotation == 90 || rotation == 270) mediaImage.width.toFloat() else mediaImage.height.toFloat()
 
-        // Run ML Kit detector to find potential candidate boxes and labels
-        imageLabeler.process(inputImage)
-            .addOnSuccessListener { labels ->
-                val detectorStartTime = System.currentTimeMillis()
-                val rawLabels = labels.map { it.text }
+        val detectorStartTime = System.currentTimeMillis()
 
-                objectDetector.process(inputImage)
-                    .addOnSuccessListener { detectedObjects ->
-                        val now = System.currentTimeMillis()
-                        val detectorLatency = now - detectorStartTime
+        // Ultra-fast Direct Object Detection (imageLabeler bypassed to eliminate 50-80ms serial latency)
+        objectDetector.process(inputImage)
+            .addOnSuccessListener { detectedObjects ->
+                val now = System.currentTimeMillis()
+                val detectorLatency = now - detectorStartTime
+                val rawLabels = detectedObjects.flatMap { it.labels.map { l -> l.text } }
 
                         // 3. LAYER 1: GEOMETRIC DEPTH & GROUND PLANE SYNTHESIS
                         // Synthesize depth grid from perspective ray tracing & bounding box contacts
@@ -228,8 +315,23 @@ class RealTimeAIObjectDetector : SensorEventListener {
                         )
                         val depthLatency = System.currentTimeMillis() - depthStartTime
 
-                        // 4. LAYER 2: WHITELIST FILTERING & CANDIDATE EXTRACTION
-                        val candidateDetections = extractWhitelistCandidates(detectedObjects, rawLabels, imageWidth, imageHeight, now)
+                        // 4. LAYER 2: PER-BOX WHITELIST FILTERING & CANDIDATE EXTRACTION (Bug 3 Fix)
+                        val rawBoxes = detectedObjects.map { obj ->
+                            val rect = obj.boundingBox
+                            val normalizedBox = BoundingBox(
+                                left = (rect.left / imageWidth).coerceIn(0.0f, 1.0f),
+                                top = (rect.top / imageHeight).coerceIn(0.0f, 1.0f),
+                                right = (rect.right / imageWidth).coerceIn(0.0f, 1.0f),
+                                bottom = (rect.bottom / imageHeight).coerceIn(0.0f, 1.0f)
+                            )
+                            val rawLabel = obj.labels.firstOrNull()?.text ?: ""
+                            val conf = obj.labels.firstOrNull()?.confidence ?: 0.50f
+                            RawBox(normalizedBox, rawLabel, conf)
+                        }
+
+                        val nonBlacklistedBoxCount = rawBoxes.count { !AssistiveClass.isBlacklisted(it.label) }
+                        val candidateDetections = extractWhitelistCandidatesFromBoxes(rawBoxes, now)
+
                         val confirmedHazards = whitelistEngine.fuseAndValidate(
                             geometricHazards = geoHazards,
                             rawDetections = candidateDetections,
@@ -260,14 +362,14 @@ class RealTimeAIObjectDetector : SensorEventListener {
                         // 6. HAZARD INTELLIGENCE ENGINE & CHATTER SUPPRESSION
                         val assessments = hazardEngine.evaluateHazards(tracklets, now)
 
-                        val finalEntities = assessments.mapNotNull { assessment ->
+                        val spokenThisFrame = assessments.count { hazardEngine.shouldTriggerAlert(it, assessments, now) }
+                        alertsSpokenCount += spokenThisFrame
+
+                        // Build allEntities: ALL tracked objects regardless of threat level for complete UI rendering
+                        val allEntities = assessments.map { assessment ->
                             val track = assessment.tracklet
                             val smoothedItem = track.smoothedClass
                             val threat = assessment.threatLevel
-
-                            // Silence Rule: If outside corridor by > 1m, moving away, or > 3.5m -> silent
-                            if (threat == ThreatLevel.NONE) return@mapNotNull null
-
                             val finalDist = track.currentDistanceMeters
                             val speed: Float = track.currentVelocity.vDistanceMetersPerSec
                             val isApproaching = track.motionState == MotionState.APPROACHING
@@ -310,6 +412,10 @@ class RealTimeAIObjectDetector : SensorEventListener {
                                 approachSpeedMps = if (isApproaching) abs(speed) else 0.0f,
                                 isApproaching = isApproaching,
                                 isStationary = track.motionState == MotionState.STATIONARY,
+                                isMoving = track.isMoving,
+                                isApproachingUser = track.isApproachingUser,
+                                relativeClosingSpeed = track.relativeClosingSpeed,
+                                inCentralCorridor = corridor.isInCentralCollisionCorridor(track.currentBox),
                                 timeToCollisionSec = track.timeToCollisionSeconds,
                                 clockPosition = clockPos,
                                 spatialZone = spatialZone,
@@ -322,9 +428,13 @@ class RealTimeAIObjectDetector : SensorEventListener {
                                 isOverheadObstacle = smoothedItem == AssistiveClass.OVERHANGING_BRANCH || smoothedItem == AssistiveClass.PROTRUDING_SIGNBOARD,
                                 threatLevel = threat,
                                 suggestedAction = action,
-                                alertSpeech = assessment.alertSpeech
+                                alertSpeech = assessment.alertSpeech,
+                                requiresImmediateHaptic = assessment.requiresImmediateHaptic
                             )
                         }
+
+                        // Filter finalEntities: active hazards (threatLevel != NONE) for voice and navigation alerts
+                        val finalEntities = allEntities.filter { it.threatLevel != ThreatLevel.NONE }
 
                         // Latency Watchdog (< 150ms on mobile device)
                         val totalLatency = System.currentTimeMillis() - startTimestamp
@@ -347,71 +457,38 @@ class RealTimeAIObjectDetector : SensorEventListener {
                             isPitchValid = isPitchSafe,
                             averageLuma = avgLuminance,
                             corridorStatus = if (finalEntities.isEmpty()) "CLEAR" else "HAZARD_DETECTED",
-                            activeTrackCount = tracklets.size
+                            activeTrackCount = tracklets.size,
+                            framesIn = framesInCount,
+                            rejectedDark = rejectedDarkCount,
+                            rejectedPitch = rejectedPitchCount,
+                            mlBoxes = detectedObjects.size,
+                            afterBlacklist = nonBlacklistedBoxCount,
+                            whitelistCandidates = candidateDetections.size,
+                            geoHazards = geoHazards.size,
+                            confirmed = confirmedHazards.size,
+                            tracked = tracklets.size,
+                            alertsSpoken = alertsSpokenCount
                         )
 
-                        onResult(finalEntities, rawLabels, false, degradedNotice)
+                        onResult(finalEntities, allEntities, rawLabels, false, degradedNotice)
                         isProcessing = false
                         imageProxy.close()
                     }
                     .addOnFailureListener {
+                        latestDebugMetrics = DebugMetrics(
+                            currentPitchDeg = currentDevicePitch,
+                            isPitchValid = isPitchSafe,
+                            averageLuma = avgLuminance,
+                            corridorStatus = "DETECTOR_ERROR",
+                            framesIn = framesInCount,
+                            rejectedDark = rejectedDarkCount,
+                            rejectedPitch = rejectedPitchCount,
+                            alertsSpoken = alertsSpokenCount
+                        )
+                        onResult(emptyList(), emptyList(), emptyList(), false, "Detector error")
                         isProcessing = false
                         imageProxy.close()
                     }
-            }
-            .addOnFailureListener {
-                isProcessing = false
-                imageProxy.close()
-            }
-    }
-
-    /**
-     * Extracts whitelist-only candidates from raw detections, enforcing the strict blacklist.
-     */
-    private fun extractWhitelistCandidates(
-        detectedObjects: List<DetectedObject>,
-        labels: List<String>,
-        imageWidth: Float,
-        imageHeight: Float,
-        now: Long
-    ): List<DetectedObstacle> {
-        val candidates = mutableListOf<DetectedObstacle>()
-
-        detectedObjects.forEach { obj ->
-            val rect = obj.boundingBox
-            val normalizedBox = BoundingBox(
-                left = (rect.left / imageWidth).coerceIn(0.0f, 1.0f),
-                top = (rect.top / imageHeight).coerceIn(0.0f, 1.0f),
-                right = (rect.right / imageWidth).coerceIn(0.0f, 1.0f),
-                bottom = (rect.bottom / imageHeight).coerceIn(0.0f, 1.0f)
-            )
-
-            val rawLabel = obj.labels.firstOrNull()?.text ?: ""
-            val conf = obj.labels.firstOrNull()?.confidence ?: 0.70f
-
-            // 1. BLACKLIST CHECK: If it matches indoor/irrelevant objects, reject it immediately
-            if (AssistiveClass.isBlacklisted(rawLabel) || labels.any { AssistiveClass.isBlacklisted(it) }) {
-                // Must NEVER be mapped or announced as a whitelist class
-                return@forEach
-            }
-
-            // 2. Strict Whitelist Matching
-            val mappedClass = AssistiveTaxonomyMapper.fromLabelText(rawLabel)
-                ?: labels.firstNotNullOfOrNull { AssistiveTaxonomyMapper.fromLabelText(it) }
-
-            if (mappedClass != null) {
-                candidates.add(
-                    DetectedObstacle(
-                        assistiveClass = mappedClass,
-                        confidence = conf,
-                        boundingBox = normalizedBox,
-                        timestampMs = now
-                    )
-                )
-            }
-        }
-
-        return candidates
     }
 
     /**
@@ -534,6 +611,7 @@ class RealTimeAIObjectDetector : SensorEventListener {
         try {
             objectDetector.close()
             imageLabeler.close()
+            liteRtDetector.close()
             tracker.clear()
             whitelistEngine.reset()
             hazardEngine.reset()

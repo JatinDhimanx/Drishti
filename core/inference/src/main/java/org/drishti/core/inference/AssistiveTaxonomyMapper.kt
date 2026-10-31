@@ -64,7 +64,8 @@ object AssistiveTaxonomyMapper {
             (lower.contains("stair") && !lower.contains("down")) ->
                 AssistiveClass.STAIRS_UP
 
-            lower.contains("pothole") || lower.contains("open_trench") || lower.contains("trench") || lower.contains("manhole") || lower.contains("drain") ->
+            lower.contains("pothole") || lower.contains("open_trench") || lower.contains("trench") ||
+            lower.contains("manhole") || lower.contains("drain") || lower.contains("gutter") || lower.contains("puddle") || lower.contains("pit") ->
                 AssistiveClass.POTHOLE_OPEN_TRENCH
 
             lower.contains("curb") || lower.contains("kerb") || lower.contains("curb_step") ->
@@ -74,7 +75,8 @@ object AssistiveTaxonomyMapper {
             lower.contains("branch") || lower.contains("overhanging") || (lower.contains("tree") && !lower.contains("street")) ->
                 AssistiveClass.OVERHANGING_BRANCH
 
-            lower.contains("signboard") || lower.contains("billboard") || lower.contains("sign") ->
+            lower.contains("signboard") || lower.contains("billboard") || lower.contains("sign") ||
+            lower.contains("awning") || lower.contains("canopy") || lower.contains("wire") ->
                 AssistiveClass.PROTRUDING_SIGNBOARD
 
             // Dynamic actors
@@ -82,11 +84,12 @@ object AssistiveTaxonomyMapper {
             lower.contains("man") || lower.contains("woman") || lower.contains("child") ->
                 AssistiveClass.PEDESTRIAN_MOVING
 
+            lower.contains("motorcycle") || lower.contains("motorbike") || lower.contains("rickshaw") ||
+            lower.contains("moped") || lower.contains("auto") ->
+                AssistiveClass.MOTORCYCLE_RICKSHAW
+
             lower.contains("bicycle") || lower.contains("escooter") || lower.contains("bike") || lower.contains("cycle") ->
                 AssistiveClass.BICYCLE_ESCOOTER
-
-            lower.contains("motorcycle") || lower.contains("rickshaw") || lower.contains("moped") || lower.contains("auto") ->
-                AssistiveClass.MOTORCYCLE_RICKSHAW
 
             lower.contains("car") || lower.contains("truck") || lower.contains("van") || lower.contains("bus") || lower.contains("vehicle") ->
                 AssistiveClass.CAR_VAN_TRUCK
@@ -94,8 +97,9 @@ object AssistiveTaxonomyMapper {
             lower.contains("dog") || lower.contains("cattle") || lower.contains("cow") || lower.contains("animal") || lower.contains("horse") ->
                 AssistiveClass.ANIMAL_DOG_CATTLE
 
-            // Street infrastructure
-            lower.contains("pole") || lower.contains("bollard") || lower.contains("lamp") || lower.contains("post") ->
+            // Street infrastructure & static blockers
+            lower.contains("pole") || lower.contains("bollard") || lower.contains("lamp") || lower.contains("post") ||
+            lower.contains("barrier") || lower.contains("barricade") || lower.contains("dustbin") || lower.contains("trash can") ->
                 AssistiveClass.POLE_BOLLARD
 
             else -> null

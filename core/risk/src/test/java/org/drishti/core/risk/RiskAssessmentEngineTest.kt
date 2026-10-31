@@ -73,4 +73,52 @@ class RiskAssessmentEngineTest {
         val first = tracked.first()
         assertTrue("Obstacle on right should be around 1 to 3 o'clock", first.clockPosition in 1..3)
     }
+
+    @Test
+    fun testStrict2MeterVibrationRules() {
+        val staticFarPole = org.drishti.core.model.TrackedObstacle(
+            trackId = 1L,
+            obstacle = DetectedObstacle(AssistiveClass.POLE_BOLLARD, 0.9f, BoundingBox(0.45f, 0.5f, 0.55f, 0.8f)),
+            estimatedDistanceMeters = 2.4f, // > 2.0m
+            azimuthDegrees = 0f,
+            clockPosition = 12,
+            timeToCollisionSeconds = 2.0f,
+            threatLevel = ThreatLevel.CAUTION,
+            isMoving = false,
+            isApproachingUser = false,
+            relativeClosingSpeed = 0f
+        )
+        // Rule 1: Static > 2m -> NO VIBRATION
+        org.junit.Assert.assertFalse("Static object > 2m must not vibrate", engine.shouldVibrate(staticFarPole))
+
+        val approachingPerson = org.drishti.core.model.TrackedObstacle(
+            trackId = 2L,
+            obstacle = DetectedObstacle(AssistiveClass.PEDESTRIAN_MOVING, 0.9f, BoundingBox(0.42f, 0.3f, 0.58f, 0.85f)),
+            estimatedDistanceMeters = 1.6f, // <= 2.0m
+            azimuthDegrees = 0f,
+            clockPosition = 12,
+            timeToCollisionSeconds = 1.2f,
+            threatLevel = ThreatLevel.CRITICAL,
+            isMoving = true,
+            isApproachingUser = true,
+            relativeClosingSpeed = 1.2f
+        )
+        // Rule 2: Approaching dynamic <= 2m -> VIBRATE
+        assertTrue("Approaching dynamic object <= 2m must vibrate", engine.shouldVibrate(approachingPerson))
+
+        val imminentStaticCollision = org.drishti.core.model.TrackedObstacle(
+            trackId = 3L,
+            obstacle = DetectedObstacle(AssistiveClass.POLE_BOLLARD, 0.9f, BoundingBox(0.45f, 0.55f, 0.55f, 0.9f)),
+            estimatedDistanceMeters = 1.4f, // <= 2.0m
+            azimuthDegrees = 0f,
+            clockPosition = 12,
+            timeToCollisionSeconds = 1.1f,
+            threatLevel = ThreatLevel.CRITICAL,
+            isMoving = false,
+            isApproachingUser = false,
+            relativeClosingSpeed = 1.1f // user walking into it
+        )
+        // Rule 3: Imminent static collision <= 2m closing -> VIBRATE
+        assertTrue("Static collision <= 2m with closing speed must vibrate", engine.shouldVibrate(imminentStaticCollision))
+    }
 }

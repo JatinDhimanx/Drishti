@@ -146,5 +146,58 @@ class GeometryObstacleEngineTest {
             assertFalse("Hazard pitch validity must be false", hazards.first().isPitchValid)
         }
     }
+
+    @Test
+    fun testSimulatedRotationMatricesDepressionAndPitchSafety() {
+        // 1. Upright phone (camera facing horizontally forward):
+        // Camera optical axis is horizontal, world Z component -R[8] = 0 => R[8] = 0.0
+        val uprightMatrix = floatArrayOf(
+            1f, 0f, 0f,
+            0f, 1f, 0f,
+            0f, 0f, 0f
+        )
+        val uprightDepression = GeometryObstacleEngine.computeDepressionDegrees(uprightMatrix)
+        assertEquals(0.0f, uprightDepression, 0.01f)
+        assertTrue("Upright phone (depression 0°) must be pitch safe", engine.isPitchSafe(uprightDepression))
+
+        // 2. Tilted down 15° (natural downward chest angle):
+        // R[8] = sin(15°) ≈ 0.258819f
+        val tilted15Matrix = floatArrayOf(
+            1f, 0f, 0f,
+            0f, 0.9659f, -0.2588f,
+            0f, 0.2588f, kotlin.math.sin(Math.toRadians(15.0)).toFloat()
+        )
+        val tilted15Depression = GeometryObstacleEngine.computeDepressionDegrees(tilted15Matrix)
+        assertEquals(15.0f, tilted15Depression, 0.1f)
+        assertTrue("Tilted down 15° must be pitch safe", engine.isPitchSafe(tilted15Depression))
+
+        // 3. Flat face-up (lying on table, camera pointing straight down at floor):
+        // R[8] = 1.0f => depression = 90°
+        val flatFaceUpMatrix = floatArrayOf(
+            1f, 0f, 0f,
+            0f, 0f, -1f,
+            0f, 1f, 1.0f
+        )
+        val flatDepression = GeometryObstacleEngine.computeDepressionDegrees(flatFaceUpMatrix)
+        assertEquals(90.0f, flatDepression, 0.01f)
+        assertFalse("Flat face-up (depression 90°) must NOT be pitch safe", engine.isPitchSafe(flatDepression))
+
+        // 4. Flat face-down (camera pointing straight up at sky):
+        // R[8] = -1.0f => depression = -90°
+        val flatFaceDownMatrix = floatArrayOf(
+            1f, 0f, 0f,
+            0f, 0f, 1f,
+            0f, -1f, -1.0f
+        )
+        val skyDepression = GeometryObstacleEngine.computeDepressionDegrees(flatFaceDownMatrix)
+        assertEquals(-90.0f, skyDepression, 0.01f)
+        assertFalse("Flat face-down (depression -90°) must NOT be pitch safe", engine.isPitchSafe(skyDepression))
+
+        // 5. Boundary checks: 40° vs 41°
+        val boundary40Matrix = FloatArray(9) { if (it == 8) kotlin.math.sin(Math.toRadians(40.0)).toFloat() else 0f }
+        val boundary41Matrix = FloatArray(9) { if (it == 8) kotlin.math.sin(Math.toRadians(41.0)).toFloat() else 0f }
+        assertTrue("40° boundary must be pitch safe", engine.isPitchSafe(GeometryObstacleEngine.computeDepressionDegrees(boundary40Matrix)))
+        assertFalse("41° boundary must NOT be pitch safe", engine.isPitchSafe(GeometryObstacleEngine.computeDepressionDegrees(boundary41Matrix)))
+    }
 }
 

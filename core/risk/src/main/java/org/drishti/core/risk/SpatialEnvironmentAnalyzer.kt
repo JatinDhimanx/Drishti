@@ -11,8 +11,12 @@ import org.drishti.core.model.WalkingCorridor
 
 /**
  * Complete Spatial Environment and Walking Corridor Analyzer for Drishti.
- * Analyzes three-zone layout (Left, Center, Right), ground contact,
- * surface walkability, and corridor obstruction states.
+ *
+ * Implements:
+ * 1. Perspective Trapezoidal Walking Corridor ROI filter (40% top to 60% bottom).
+ * 2. Peripheral threat downgrading for static street objects outside the walking path.
+ * 3. 3-Zone Escape Route Planning (Left 10 o'clock, Center 12 o'clock, Right 2 o'clock)
+ *    providing actionable steering instructions ("Step Left", "Step Right", "Stop immediately").
  */
 class SpatialEnvironmentAnalyzer(
     val depthEstimator: GroundContactDepthEstimator = GroundContactDepthEstimator(),
@@ -24,10 +28,11 @@ class SpatialEnvironmentAnalyzer(
         val recommendedDetour: DetourRecommendation,
         val detectedSurface: SurfaceType,
         val analyses: List<SpatialObstacleAnalysis>,
-        val criticalGroundHazards: List<SpatialObstacleAnalysis>
+        val criticalGroundHazards: List<SpatialObstacleAnalysis>,
+        val escapeZone: SpatialZone? = null
     )
 
-    enum class DetourRecommendation(val english: String, val hindi: String) {
+    enum class DetourRecommendation(val actionPromptEn: String, val actionPromptHi: String) {
         MAINTAIN_COURSE("Walk straight", "Seedhe chaliye"),
         VEER_LEFT("Step slightly left", "Thoda baayein chaliye"),
         VEER_RIGHT("Step slightly right", "Thoda daayein chaliye"),
@@ -48,6 +53,8 @@ class SpatialEnvironmentAnalyzer(
             WalkingCorridor(
                 leftBound = (corridor.leftBound + shift).coerceIn(0.1f, 0.4f),
                 rightBound = (corridor.rightBound + shift).coerceIn(0.6f, 0.9f),
+                topWidthRatio = corridor.topWidthRatio,
+                bottomWidthRatio = corridor.bottomWidthRatio,
                 yawOffsetDegrees = yawOffsetDegrees
             )
         } else {
@@ -73,15 +80,15 @@ class SpatialEnvironmentAnalyzer(
             )
             analyses.add(analysis)
 
-            // Ground-level hazard identification
-            if (detection.assistiveClass.category == AssistiveClass.HazardCategory.GROUND_HAZARD) {
+            // Ground-level hazard identification (stairs down, open trench, pothole)
+            if (detection.assistiveClass.category.isGroundTrap) {
                 if (depth.distanceTier == DistanceTier.VERY_NEAR || depth.distanceTier == DistanceTier.NEAR) {
                     criticalGroundHazards.add(analysis)
                 }
             }
         }
 
-        // Evaluate corridor obstruction
+        // 1. Evaluate corridor obstruction
         val inCorridorObstacles = analyses.filter {
             it.zone == SpatialZone.CENTER || it.corridorOverlapRatio > 0.25f
         }
@@ -91,15 +98,16 @@ class SpatialEnvironmentAnalyzer(
 
         val status: CorridorStatus
         val detour: DetourRecommendation
+        val escapeZone: SpatialZone?
 
         when {
             criticalGroundHazards.isNotEmpty() || veryNearInCorridor.any { it.corridorOverlapRatio > 0.45f } -> {
                 status = CorridorStatus.BLOCKED
                 detour = DetourRecommendation.STOP_IMMEDIATELY
+                escapeZone = null
             }
             veryNearInCorridor.isNotEmpty() || nearInCorridor.any { it.corridorOverlapRatio > 0.20f } -> {
                 status = CorridorStatus.PARTIALLY_OBSTRUCTED
-                // Determine whether left or right side has more clearance
                 val leftObstructions = analyses.count {
                     it.zone == SpatialZone.LEFT ||
                     (it.zone == SpatialZone.CENTER && it.obstacle.boundingBox.centerX < activeCorridor.corridorCenter)
@@ -108,19 +116,23 @@ class SpatialEnvironmentAnalyzer(
                     it.zone == SpatialZone.RIGHT ||
                     (it.zone == SpatialZone.CENTER && it.obstacle.boundingBox.centerX >= activeCorridor.corridorCenter)
                 }
-                detour = if (leftObstructions > rightObstructions) {
-                    DetourRecommendation.VEER_RIGHT
+                if (leftObstructions > rightObstructions) {
+                    detour = DetourRecommendation.VEER_RIGHT
+                    escapeZone = SpatialZone.RIGHT
                 } else {
-                    DetourRecommendation.VEER_LEFT
+                    detour = DetourRecommendation.VEER_LEFT
+                    escapeZone = SpatialZone.LEFT
                 }
             }
             nearInCorridor.isNotEmpty() -> {
                 status = CorridorStatus.PARTIALLY_OBSTRUCTED
                 detour = DetourRecommendation.MAINTAIN_COURSE
+                escapeZone = SpatialZone.CENTER
             }
             else -> {
                 status = CorridorStatus.CLEAR
                 detour = DetourRecommendation.MAINTAIN_COURSE
+                escapeZone = SpatialZone.CENTER
             }
         }
 
@@ -132,7 +144,8 @@ class SpatialEnvironmentAnalyzer(
             recommendedDetour = detour,
             detectedSurface = surface,
             analyses = analyses,
-            criticalGroundHazards = criticalGroundHazards
+            criticalGroundHazards = criticalGroundHazards,
+            escapeZone = escapeZone
         )
     }
 
@@ -151,4 +164,3 @@ class SpatialEnvironmentAnalyzer(
         }
     }
 }
-

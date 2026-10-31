@@ -1,5 +1,6 @@
 package org.drishti.core.vision
 
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.max
 import kotlin.math.min
@@ -7,11 +8,9 @@ import kotlin.math.min
 /**
  * Adaptive frame rate throttler designed for real-time mobile AI inference.
  *
- * Targets a stable 15 to 20 FPS processing rate while monitoring real-time
- * model inference latency. If inference latency spikes (e.g. thermal throttling
- * or heavy background processing), this throttler dynamically expands the
- * minimum inter-frame interval to prevent queue bloat, out-of-order execution,
- * and high CPU thermal buildup.
+ * During active pedestrian navigation, blind users walk at ~1.2 m/s. Frame throttling
+ * must NEVER starve the vision pipeline. When active walking is enabled, minimum
+ * processing rate is locked at 15–20 FPS (interval <= 50-66ms) to prevent collisions.
  */
 class AdaptiveFrameThrottler(
     private val targetFps: Int = 18,
@@ -22,6 +21,10 @@ class AdaptiveFrameThrottler(
     private val minIntervalMs: Long = (1000.0 / maxFps).toLong()
     private val maxIntervalMs: Long = (1000.0 / minFps).toLong()
 
+    // Active walking navigation mode: clamps minimum FPS to 15-20 FPS (defaults true for responsive safety)
+    private val isNavigatingActive = AtomicBoolean(true)
+    private val activeWalkingMaxIntervalMs: Long = 66L // ~15 FPS minimum
+
     private val lastProcessedTimestampMs = AtomicLong(0L)
     private val currentDynamicIntervalMs = AtomicLong(baseIntervalMs)
     private val lastInferenceDurationMs = AtomicLong(0L)
@@ -29,6 +32,18 @@ class AdaptiveFrameThrottler(
     // Rolling latency statistics over the last 8 cycles
     private val latencyHistory = LongArray(8) { 0L }
     private var historyIndex = 0
+
+    /**
+     * Toggles active walking navigation mode.
+     * When true, disables aggressive frame dropping and enforces a strict 15-20 FPS minimum.
+     */
+    @Synchronized
+    fun setNavigatingActive(active: Boolean) {
+        isNavigatingActive.set(active)
+        recomputeInterval()
+    }
+
+    fun isNavigatingActive(): Boolean = isNavigatingActive.get()
 
     /**
      * Determines whether an incoming camera frame should be processed or dropped.
@@ -65,11 +80,12 @@ class AdaptiveFrameThrottler(
 
     /**
      * Forces a lower FPS throttle target, e.g. when entering low-battery or power-saving mode.
+     * If user is in active walking navigation, power saving is prevented from dropping below 15 FPS for safety.
      */
     @Synchronized
     fun applyPowerSavingThrottle(powerSaveEnabled: Boolean) {
-        if (powerSaveEnabled) {
-            // Drop to minimum 10 FPS (100ms interval)
+        if (powerSaveEnabled && !isNavigatingActive.get()) {
+            // Drop to 10 FPS (100ms interval) only when not actively walking
             currentDynamicIntervalMs.set(max(100L, currentDynamicIntervalMs.get()))
         } else {
             recomputeInterval()
@@ -79,13 +95,21 @@ class AdaptiveFrameThrottler(
     private fun recomputeInterval() {
         val nonZeroCount = latencyHistory.count { it > 0 }
         if (nonZeroCount == 0) {
-            currentDynamicIntervalMs.set(baseIntervalMs)
+            val defaultInterval = if (isNavigatingActive.get()) min(baseIntervalMs, activeWalkingMaxIntervalMs) else baseIntervalMs
+            currentDynamicIntervalMs.set(defaultInterval)
             return
         }
 
         val averageLatency = latencyHistory.filter { it > 0 }.average()
         val requiredInterval = (averageLatency * 1.15).toLong()
-        val adjustedInterval = max(baseIntervalMs, min(maxIntervalMs, requiredInterval))
+
+        val effectiveMaxInterval = if (isNavigatingActive.get()) {
+            activeWalkingMaxIntervalMs
+        } else {
+            maxIntervalMs
+        }
+
+        val adjustedInterval = max(minIntervalMs, min(effectiveMaxInterval, requiredInterval))
         currentDynamicIntervalMs.set(adjustedInterval)
     }
 
@@ -98,9 +122,7 @@ class AdaptiveFrameThrottler(
         lastProcessedTimestampMs.set(0L)
         currentDynamicIntervalMs.set(baseIntervalMs)
         lastInferenceDurationMs.set(0L)
+        latencyHistory.fill(0L)
         historyIndex = 0
-        for (i in latencyHistory.indices) {
-            latencyHistory[i] = 0L
-        }
     }
 }

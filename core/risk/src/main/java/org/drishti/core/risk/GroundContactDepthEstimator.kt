@@ -39,7 +39,7 @@ class GroundContactDepthEstimator(
         val groundContactY = box.groundContactY // 0.0 (top) to 1.0 (bottom)
 
         // Special handling for head-level hazards (not in ground contact)
-        if (category == AssistiveClass.HazardCategory.HEAD_LEVEL) {
+        if (category.isHeadHazard) {
             return estimateHeadLevelDistance(box, obstacle.confidence)
         }
 
@@ -59,7 +59,24 @@ class GroundContactDepthEstimator(
         }
 
         val angleRad = Math.toRadians(totalDepressionAngleDeg.toDouble())
-        val computedDistance = (cameraHeightMeters / tan(angleRad)).toFloat().coerceIn(0.4f, 15.0f)
+        val computedGroundDistance = (cameraHeightMeters / tan(angleRad)).toFloat().coerceIn(0.4f, 15.0f)
+
+        // Class height prior calibration (blends ground trigonometry with object height scaling)
+        val heightPrior = getClassHeightPrior(obstacle.assistiveClass)
+        val computedDistance = if (heightPrior != null && box.height > 0.05f) {
+            val vFovRad = Math.toRadians(verticalFovDegrees.toDouble())
+            // Estimated distance from focal length geometry: D = H_real / (2 * h_norm * tan(VFOV/2))
+            val heightEstimatedDist = (heightPrior / (2f * box.height * tan(vFovRad / 2.0).toFloat())).coerceIn(0.5f, 12.0f)
+
+            // Weight ground contact (70%) and height prior (30%) for high accuracy around 2.0m
+            if (groundContactY >= 0.40f) {
+                0.70f * computedGroundDistance + 0.30f * heightEstimatedDist
+            } else {
+                computedGroundDistance
+            }
+        } else {
+            computedGroundDistance
+        }
 
         // Metric calibration validity check:
         // Valid only if device pitch is in a reasonable walking orientation (0° to 35°)
@@ -73,6 +90,19 @@ class GroundContactDepthEstimator(
             isMetricCalibrated = isCalibrated,
             confidenceScore = if (isCalibrated) obstacle.confidence else obstacle.confidence * 0.6f
         )
+    }
+
+    private fun getClassHeightPrior(assistiveClass: AssistiveClass): Float? {
+        return when (assistiveClass) {
+            AssistiveClass.PEDESTRIAN_MOVING -> 1.70f
+            AssistiveClass.CAR_VAN_TRUCK -> 1.55f
+            AssistiveClass.MOTORCYCLE_RICKSHAW -> 1.25f
+            AssistiveClass.BICYCLE_ESCOOTER -> 1.15f
+            AssistiveClass.POLE_BOLLARD -> 1.00f
+            AssistiveClass.ANIMAL_DOG_CATTLE -> 0.60f
+            AssistiveClass.OVERHANGING_BRANCH, AssistiveClass.PROTRUDING_SIGNBOARD -> 1.80f
+            else -> null
+        }
     }
 
     /**

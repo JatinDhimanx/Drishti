@@ -171,5 +171,35 @@ class ByteTrackerTest {
         // Stale track must be removed
         assertTrue("Track must be removed after exceeding max lost frames", tracks.isEmpty())
     }
+
+    @Test
+    fun testMotionStateAndApproachVelocityCalculation() {
+        var time = 1000L
+        val corridor = WalkingCorridor(0.30f, 0.70f)
+
+        // 3 frames of a pedestrian closing in
+        val distances = listOf(4.0f, 3.0f, 2.0f)
+        val boxes = listOf(
+            BoundingBox(0.42f, 0.30f, 0.58f, 0.60f),
+            BoundingBox(0.40f, 0.35f, 0.60f, 0.72f),
+            BoundingBox(0.38f, 0.40f, 0.62f, 0.85f)
+        )
+
+        var lastTracks: List<ByteTracklet> = emptyList()
+        for (i in distances.indices) {
+            val det = DetectedObstacle(
+                assistiveClass = AssistiveClass.PEDESTRIAN_MOVING,
+                confidence = 0.90f,
+                boundingBox = boxes[i]
+            )
+            lastTracks = tracker.update(listOf(det), { distances[i] }, corridor, time)
+            time += 200L
+        }
+
+        val track = lastTracks.first()
+        assertTrue("Dynamic pedestrian closing in should have isMoving = true", track.isMoving)
+        assertTrue("Approaching pedestrian should have isApproachingUser = true", track.isApproachingUser)
+        assertTrue("Closing speed should be positive (~5.0 m/s or > 0.5 m/s)", track.relativeClosingSpeed > 0.5f)
+    }
 }
 

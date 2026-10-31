@@ -44,6 +44,92 @@ class HapticManager(context: Context) {
 
         val PATTERN_SOS_ALARM = longArrayOf(0, 300, 100, 300, 100, 500)
         val AMPLITUDES_SOS_ALARM = intArrayOf(0, 255, 0, 255, 0, 255)
+
+        // Strict 2-Meter Collision & Motion Waveforms:
+        // Approaching dynamic object (<=2m): Fast sharp double/triple pulse
+        val PATTERN_APPROACHING_DYNAMIC_2M = longArrayOf(0, 70, 50, 70, 50, 90)
+        val AMPLITUDES_APPROACHING_DYNAMIC_2M = intArrayOf(0, 240, 0, 240, 0, 255)
+
+        // Imminent static collision (<=2m): Solid continuous strong pulse
+        val PATTERN_IMMINENT_STATIC_COLLISION_2M = longArrayOf(0, 320)
+        val AMPLITUDES_IMMINENT_STATIC_COLLISION_2M = intArrayOf(0, 255)
+    }
+
+    /**
+     * Approaching Dynamic Hazard (<= 2.0m):
+     * Fast double/triple pulse (alerts the user that an approaching person or vehicle is entering the 2m zone).
+     * Preempts any ongoing vibration instantly (<50ms).
+     */
+    fun vibrateApproachingHazard2M() {
+        if (!isHapticEnabled || vibrator == null || !vibrator.hasVibrator()) return
+        try { vibrator.cancel() } catch (e: Exception) {}
+        vibratePattern(PATTERN_APPROACHING_DYNAMIC_2M, AMPLITUDES_APPROACHING_DYNAMIC_2M)
+    }
+
+    /**
+     * Imminent Static Collision (<= 2.0m):
+     * Solid continuous strong pulse (tells the user to immediately stop or step aside).
+     * Preempts any ongoing vibration instantly (<50ms).
+     */
+    fun vibrateImminentStaticCollision2M() {
+        if (!isHapticEnabled || vibrator == null || !vibrator.hasVibrator()) return
+        try { vibrator.cancel() } catch (e: Exception) {}
+        vibratePattern(PATTERN_IMMINENT_STATIC_COLLISION_2M, AMPLITUDES_IMMINENT_STATIC_COLLISION_2M)
+    }
+
+    /**
+     * Static Object Proximity Warning (immovable object within 2m):
+     * Single gentle pulse — used only when user is approaching a static blocker.
+     */
+    fun vibrateStaticProximity() {
+        vibrateImminentStaticCollision2M()
+    }
+
+    /**
+     * Strict 2-Meter Collision & Motion Haptic Dispatcher:
+     * - Rule 1: Static & Far (>2.0m) or Off-Path -> Explicitly blocks vibration!
+     * - Rule 2: Approaching Dynamic Object <= 2.0m -> Fast sharp double/triple pulse.
+     * - Rule 3: Imminent Static Collision <= 2.0m -> Solid continuous strong pulse.
+     */
+    fun dispatch2MeterHaptic(
+        distanceMeters: Float,
+        isMoving: Boolean,
+        isApproachingUser: Boolean,
+        inCentralCorridor: Boolean,
+        relativeClosingSpeed: Float,
+        isGroundTrap: Boolean = false,
+        isHeadHazard: Boolean = false
+    ): Boolean {
+        if (!isHapticEnabled || vibrator == null || !vibrator.hasVibrator()) return false
+
+        // Ground drop-offs or head hazards
+        if (isGroundTrap && distanceMeters <= 2.5f) {
+            vibrateDropOff()
+            return true
+        }
+        if (isHeadHazard && distanceMeters <= 2.0f) {
+            vibrateCriticalStop()
+            return true
+        }
+
+        // Rule 1: Stationary and either > 2.0m or outside central walking corridor -> BLOCKED (NO VIBRATION)
+        if (!isMoving && (distanceMeters > 2.0f || !inCentralCorridor)) {
+            return false
+        }
+
+        // Rule 2: Dynamic object approaching <= 2.0m -> Fast pulse
+        if (isMoving && isApproachingUser && distanceMeters <= 2.0f) {
+            vibrateApproachingHazard2M()
+            return true
+        }
+
+        // Rule 3: Imminent user collision with stationary obstacle in central path <= 2.0m
+        if (!isMoving && inCentralCorridor && distanceMeters <= 2.0f && relativeClosingSpeed > 0.20f) {
+            vibrateImminentStaticCollision2M()
+            return true
+        }
+
+        return false
     }
 
     /**
@@ -62,9 +148,13 @@ class HapticManager(context: Context) {
     /**
      * Critical Collision Stop Pattern:
      * 3 sharp, maximum-intensity pulses [0ms, 120ms ON, 60ms OFF, 120ms ON, 60ms OFF, 250ms ON]
+     * Preempts any ongoing vibration instantly (<50ms).
      */
     fun vibrateCriticalStop() {
         if (!isHapticEnabled || vibrator == null || !vibrator.hasVibrator()) return
+        try {
+            vibrator.cancel()
+        } catch (e: Exception) {}
         vibratePattern(PATTERN_CRITICAL_STOP, AMPLITUDES_CRITICAL_STOP)
     }
 

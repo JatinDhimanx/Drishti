@@ -13,6 +13,7 @@ import org.drishti.core.risk.SpatialEnvironmentAnalyzer
  *
  * Merges real-time CameraX obstacle perception with GPS pedestrian turn maneuvers
  * into unified, natural instructions while ensuring safety-critical obstacle preemption.
+ * Alerts are ultra-crisp (<3-5 words) to avoid blocking environmental sounds.
  */
 class FusedGuidanceCoordinator(
     var userLanguage: String = "hi"
@@ -47,12 +48,21 @@ class FusedGuidanceCoordinator(
             )
         }
 
-        // 2. Corridor Blockage Override: Obstruction ahead requires detouring before continuing route
+        // 2. Corridor Blockage Override: Obstruction ahead requires steering before continuing route
         if (envSummary?.corridorStatus == CorridorStatus.BLOCKED) {
+            val detourAction = envSummary.recommendedDetour
             val blockedSpeech = if (userLanguage == "hi") {
-                "Rukiye! Aage raasta band hai. Kripya rukein aur surakshit disha chunein."
+                if (detourAction == SpatialEnvironmentAnalyzer.DetourRecommendation.STOP_IMMEDIATELY) {
+                    "Rukiye! Aage raasta band."
+                } else {
+                    "Aage rukaawat, ${detourAction.actionPromptHi}."
+                }
             } else {
-                "Stop! Walking corridor blocked ahead. Please halt and re-orient."
+                if (detourAction == SpatialEnvironmentAnalyzer.DetourRecommendation.STOP_IMMEDIATELY) {
+                    "Stop! Path blocked ahead."
+                } else {
+                    "Obstacle ahead, ${detourAction.actionPromptEn}."
+                }
             }
             return FusedOutput(
                 speechText = blockedSpeech,
@@ -69,39 +79,39 @@ class FusedGuidanceCoordinator(
         ) {
             val item = hazardAssessment.tracklet.assistiveClass
             val sideHi = when (hazardAssessment.spatialZone) {
-                SpatialZone.LEFT -> "baayein taraf"
-                SpatialZone.RIGHT -> "daayein taraf"
+                SpatialZone.LEFT -> "baayein"
+                SpatialZone.RIGHT -> "daayein"
                 SpatialZone.CENTER -> "samne"
             }
             val sideEn = when (hazardAssessment.spatialZone) {
-                SpatialZone.LEFT -> "on your left"
-                SpatialZone.RIGHT -> "on your right"
+                SpatialZone.LEFT -> "left"
+                SpatialZone.RIGHT -> "right"
                 SpatialZone.CENTER -> "ahead"
             }
 
             val steps = navGuidance.estimatedStepsToNextTurn
             val fusedText = if (userLanguage == "hi") {
                 when (navGuidance.maneuver) {
-                    TurnManeuver.TURN_LEFT -> "Lagbhag $steps kadam baad sambhal kar baayein mudiye. Dhyan dijiye, $sideHi ${item.hindiLabel} hai."
-                    TurnManeuver.TURN_RIGHT -> "Lagbhag $steps kadam baad sambhal kar daayein mudiye. Dhyan dijiye, $sideHi ${item.hindiLabel} hai."
-                    TurnManeuver.CONTINUE_STRAIGHT -> "Seedhe chaliye, lekin dhyan rahe $sideHi ${item.hindiLabel} hai."
-                    TurnManeuver.OFF_PATH_WARNING -> "Aap raste se hat gaye hain. Dhyan dijiye, $sideHi ${item.hindiLabel} hai."
-                    TurnManeuver.DESTINATION_ARRIVED -> "Aap manzil par pahunch gaye hain. $sideHi ${item.hindiLabel} hai."
+                    TurnManeuver.TURN_LEFT -> "$steps kadam baad sambhal kar baayein mudiye, $sideHi ${item.hindiLabel}."
+                    TurnManeuver.TURN_RIGHT -> "$steps kadam baad sambhal kar daayein mudiye, $sideHi ${item.hindiLabel}."
+                    TurnManeuver.CONTINUE_STRAIGHT -> "Seedhe chaliye, $sideHi ${item.hindiLabel}."
+                    TurnManeuver.OFF_PATH_WARNING -> "Raste se bhatke, $sideHi ${item.hindiLabel}."
+                    TurnManeuver.DESTINATION_ARRIVED -> "Manzil aa gayi, $sideHi ${item.hindiLabel}."
                 }
             } else {
                 when (navGuidance.maneuver) {
-                    TurnManeuver.TURN_LEFT -> "In about $steps steps, turn left carefully. Note: ${item.englishLabel} is $sideEn."
-                    TurnManeuver.TURN_RIGHT -> "In about $steps steps, turn right carefully. Note: ${item.englishLabel} is $sideEn."
-                    TurnManeuver.CONTINUE_STRAIGHT -> "Continue straight. Note: ${item.englishLabel} $sideEn."
-                    TurnManeuver.OFF_PATH_WARNING -> "Off path, please turn around. Caution: ${item.englishLabel} $sideEn."
-                    TurnManeuver.DESTINATION_ARRIVED -> "You have arrived. Caution: ${item.englishLabel} $sideEn."
+                    TurnManeuver.TURN_LEFT -> "In $steps steps, turn left carefully. Note: ${item.englishLabel} $sideEn."
+                    TurnManeuver.TURN_RIGHT -> "In $steps steps, turn right carefully. Note: ${item.englishLabel} $sideEn."
+                    TurnManeuver.CONTINUE_STRAIGHT -> "Straight. Note: ${item.englishLabel} $sideEn."
+                    TurnManeuver.OFF_PATH_WARNING -> "Off path. Caution: ${item.englishLabel} $sideEn."
+                    TurnManeuver.DESTINATION_ARRIVED -> "Arrived. Caution: ${item.englishLabel} $sideEn."
                 }
             }
 
             return FusedOutput(
                 speechText = fusedText,
                 isCriticalPreemption = false,
-                requiresHaptic = threatLevel == ThreatLevel.WARNING,
+                requiresHaptic = hazardAssessment.requiresImmediateHaptic,
                 activeManeuver = navGuidance.maneuver,
                 primaryThreat = threatLevel
             )
@@ -112,7 +122,7 @@ class FusedGuidanceCoordinator(
             return FusedOutput(
                 speechText = hazardAssessment.alertSpeech,
                 isCriticalPreemption = false,
-                requiresHaptic = threatLevel == ThreatLevel.WARNING,
+                requiresHaptic = hazardAssessment.requiresImmediateHaptic,
                 activeManeuver = navGuidance?.maneuver,
                 primaryThreat = threatLevel
             )
@@ -139,4 +149,3 @@ class FusedGuidanceCoordinator(
         )
     }
 }
-

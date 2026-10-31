@@ -29,6 +29,19 @@ class BatterySaverOptimizer(
     var isSystemPowerSaveActive: Boolean = false
         private set
 
+    var isNavigatingActive: Boolean = false
+        private set
+
+    /**
+     * Updates navigation state. During active walking navigation, safety is prioritized
+     * and inference rate is kept at 15-20 FPS minimum.
+     */
+    fun setNavigatingActive(active: Boolean) {
+        this.isNavigatingActive = active
+        throttler.setNavigatingActive(active)
+        applyProfile(determineActiveProfile())
+    }
+
     /**
      * Updates power state from system broadcasts.
      */
@@ -69,7 +82,8 @@ class BatterySaverOptimizer(
     private fun applyProfile(profile: PowerProfile) {
         when (profile) {
             PowerProfile.CRITICAL_BATTERY_SAVER -> {
-                throttler.applyPowerSavingThrottle(powerSaveEnabled = true)
+                // If actively navigating, power saving is constrained to maintain safe walking FPS
+                throttler.applyPowerSavingThrottle(powerSaveEnabled = !isNavigatingActive)
             }
             PowerProfile.BLIND_SAVER -> {
                 // Keep inference at full speed so safety is not compromised
@@ -81,4 +95,3 @@ class BatterySaverOptimizer(
         }
     }
 }
-

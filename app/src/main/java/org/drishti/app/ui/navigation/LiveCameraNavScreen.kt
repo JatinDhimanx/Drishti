@@ -141,6 +141,10 @@ fun LiveCameraNavScreen(
     var isStoppedByHazard by remember { mutableStateOf(false) }
     var lastHazardAnnounceTime by remember { mutableLongStateOf(0L) }
     var lastResumeWalkAnnounceTime by remember { mutableLongStateOf(0L) }
+    var allDetectedEntities by remember { mutableStateOf<List<RecognizedEntity>>(emptyList()) }
+    var lastClearPathAnnounceTime by remember { mutableLongStateOf(0L) }
+    var clearFrameCount by remember { mutableStateOf(0) }
+    var lastHapticVibrateTime by remember { mutableLongStateOf(0L) }
 
     // GPS & Compass State
     var userLat by remember { mutableDoubleStateOf(28.6139) }
@@ -195,9 +199,12 @@ fun LiveCameraNavScreen(
                     SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
                     SensorManager.getOrientation(rotationMatrix, orientationAngles)
                     val azimuthDegrees = Math.toDegrees(orientationAngles[0].toDouble()).toFloat()
-                    val pitchDegrees = Math.toDegrees(orientationAngles[1].toDouble()).toFloat()
                     compassHeading = (azimuthDegrees + 360f) % 360f
-                    aiDetector.setPitchDegrees(pitchDegrees)
+
+                    // Bug 1 fix: Compute camera depression angle from rotation matrix R[8]
+                    // 0° = looking straight ahead horizontally, + = looking down towards ground
+                    val depressionDeg = org.drishti.core.vision.GeometryObstacleEngine.computeDepressionDegrees(rotationMatrix)
+                    aiDetector.setPitchDegrees(depressionDeg)
                 }
             }
 
@@ -333,13 +340,18 @@ fun LiveCameraNavScreen(
                                     else sb.append(if (isHi) "Rukiye! Samne ${nearest.hindiName} bohot paas hai!" else "Stop! ${nearest.englishName} very close ahead!")
                                 }
                                 SuggestedAction.AHEAD_BLOCKED -> sb.append(if (isHi) "Rukiye! Raste me ${nearest.hindiName} hai." else "Stop! ${nearest.englishName} is blocking path.")
-                                SuggestedAction.CONTINUE_SAFE -> sb.append(if (isHi) "Rasta saaf hai, aage $distFt feet par ${nearest.hindiName} hai." else "Path is clear, ${nearest.englishName} is $distFt feet ahead.")
+                                SuggestedAction.CONTINUE_SAFE -> {
+                                    // Silence - Never say path clear / rasta saaf hai
+                                }
                             }
                         } else {
-                            sb.append(if (isHi) "Rasta bilkul saaf hai, aage badh sakte hain." else "Path is completely clear ahead, continue walking.")
+                            // Silence - No detected threat. Never announce "path clear" / "rasta saaf hai"
                         }
 
-                        speechManager.speakGuidance(sb.toString(), flush = true)
+                        val toSpeak = sb.toString().trim()
+                        if (toSpeak.isNotEmpty()) {
+                            speechManager.speakGuidance(toSpeak, flush = true)
+                        }
                     },
                     onDoubleTap = {
                         // Double Tap: Open obstacle detail modal
@@ -393,7 +405,7 @@ fun LiveCameraNavScreen(
 
                         imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
                             if (!isPaused) {
-                                aiDetector.processImageProxy(imageProxy) { entities, labels, isDarkOrCovered, degradedNotice ->
+                                aiDetector.processImageProxy(imageProxy) { entities, allEntities, labels, isDarkOrCovered, degradedNotice ->
                                     val now = System.currentTimeMillis()
                                     val isHi = speechManager.currentLanguage == "hi"
                                     currentDebugMetrics = aiDetector.latestDebugMetrics
@@ -412,6 +424,7 @@ fun LiveCameraNavScreen(
                                     if (isDarkOrCovered) {
                                         isCameraDarkOrCovered = true
                                         detectedEntities = emptyList()
+                                        allDetectedEntities = emptyList()
                                         lastAlertText = if (isHi) "Camera ke aage andhera hai" else "Camera lens is dark or covered"
 
                                         if (now - lastDarkAnnounceTime > 4000L) {
@@ -437,59 +450,92 @@ fun LiveCameraNavScreen(
                                     }
 
                                     detectedEntities = entities
+                                    allDetectedEntities = allEntities
                                     sceneLabels = labels
 
-                                    // Check Critical / Obstacle Threat
+                                    // Check Strict 2-Meter Collision & Emergency Threat
                                     val criticalOrBlockedEntity = entities.firstOrNull {
                                         it.suggestedAction == SuggestedAction.EMERGENCY_STOP ||
                                         it.suggestedAction == SuggestedAction.AHEAD_BLOCKED ||
                                         it.threatLevel == ThreatLevel.CRITICAL ||
                                         it.isStairsDownward ||
                                         it.isPotholeOrDrain ||
+                                        (it.distanceMeters <= 2.0f && (it.isApproachingUser || (it.inCentralCorridor && it.relativeClosingSpeed > 0.20f))) ||
                                         (it.isVehicle && it.isApproaching && it.distanceMeters < 3.5f)
                                     }
 
                                     if (criticalOrBlockedEntity != null) {
-                                        // "RUKNA KAB HAI" Condition Triggered
+                                        clearFrameCount = 0
+
+                                        // Crisp 3-4 word alert with escape direction
                                         val warningSpeech = when {
-                                            criticalOrBlockedEntity.isVehicle && criticalOrBlockedEntity.isApproaching -> {
-                                                when (criticalOrBlockedEntity.movementDirection) {
-                                                    "Approaching from Right" -> if (isHi) "Rukiye! Daayein se gadi aa rahi hai!" else "Stop! Vehicle approaching from right!"
-                                                    "Approaching from Left" -> if (isHi) "Rukiye! Baayein se gadi aa rahi hai!" else "Stop! Vehicle approaching from left!"
-                                                    else -> if (isHi) "Rukiye! Samne se gadi aa rahi hai!" else "Stop! Vehicle approaching ahead!"
-                                                }
-                                            }
-                                            criticalOrBlockedEntity.isPedestrian -> {
-                                                if (isHi) "Rukiye! Samne insaan khada hai!" else "Stop! Person right in front!"
-                                            }
                                             criticalOrBlockedEntity.isStairsDownward -> {
-                                                if (isHi) "Rukiye! Aage sidhiyan neeche ja rahi hain" else "Stop! Stairs going down ahead"
+                                                if (isHi) "Rukiye! Aage sidhiyan neeche ja rahi hain." else "Stop! Stairs going down ahead."
                                             }
                                             criticalOrBlockedEntity.isPotholeOrDrain -> {
-                                                if (isHi) "Rukiye! Aage khadda hai" else "Stop! Pothole or drain ahead"
+                                                if (isHi) "Rukiye! Aage khadda hai." else "Stop! Pothole or drain ahead."
+                                            }
+                                            criticalOrBlockedEntity.isVehicle && criticalOrBlockedEntity.isApproaching -> {
+                                                if (isHi) "Rukiye! Gadi aa rahi hai!" else "Stop! Vehicle approaching!"
+                                            }
+                                            criticalOrBlockedEntity.isPedestrian && criticalOrBlockedEntity.isApproachingUser -> {
+                                                val side = if (criticalOrBlockedEntity.spatialZone == "Left") "daayein chalein" else "baayein chalein"
+                                                val sideEn = if (criticalOrBlockedEntity.spatialZone == "Left") "step right" else "step left"
+                                                if (isHi) "Insaan aa raha, $side." else "Person approaching, $sideEn."
+                                            }
+                                            criticalOrBlockedEntity.distanceMeters <= 2.0f -> {
+                                                val side = if (criticalOrBlockedEntity.spatialZone == "Left") "daayein chalein" else "baayein chalein"
+                                                val sideEn = if (criticalOrBlockedEntity.spatialZone == "Left") "step right" else "step left"
+                                                if (isHi) "${criticalOrBlockedEntity.hindiName} samne, $side." else "${criticalOrBlockedEntity.englishName} ahead, $sideEn."
                                             }
                                             else -> {
-                                                if (isHi) "Rukiye! Aage turant khatra hai" else "Stop! Immediate hazard ahead"
+                                                if (isHi) "Rukiye! Aage turant khatra hai." else "Stop! Immediate hazard ahead."
                                             }
                                         }
 
                                         lastAlertText = warningSpeech
 
-                                        if (!isStoppedByHazard || (now - lastHazardAnnounceTime > 2500L)) {
+                                        if (!isStoppedByHazard || (now - lastHazardAnnounceTime > 2200L)) {
                                             isStoppedByHazard = true
                                             lastHazardAnnounceTime = now
                                             lastSpokenTime = now
                                             lastSpokenAction = SuggestedAction.EMERGENCY_STOP
-                                            hapticManager.vibrateCriticalStop()
+
+                                            // Trigger distinct 2-meter vibration pattern
+                                            if (criticalOrBlockedEntity.isMoving && criticalOrBlockedEntity.isApproachingUser && criticalOrBlockedEntity.distanceMeters <= 2.0f) {
+                                                hapticManager.vibrateApproachingHazard2M()
+                                            } else if (!criticalOrBlockedEntity.isMoving && criticalOrBlockedEntity.distanceMeters <= 2.0f) {
+                                                hapticManager.vibrateImminentStaticCollision2M()
+                                            } else if (criticalOrBlockedEntity.isStairsDownward || criticalOrBlockedEntity.isPotholeOrDrain) {
+                                                hapticManager.vibrateDropOff()
+                                            } else {
+                                                hapticManager.vibrateCriticalStop()
+                                            }
+
                                             speechManager.speakCritical(warningSpeech)
                                         }
                                     } else {
                                         // Path is clear of emergency stops
                                         if (isStoppedByHazard) {
                                             isStoppedByHazard = false
-                                            lastAlertText = if (isHi) "Raasta saaf hai" else "Path clear"
+                                            lastAlertText = ""
                                             hapticManager.vibrateClick()
-                                            // Silence over audio — Never announce "path clear" over TTS
+                                        }
+
+                                        // Strict 2-Meter Haptic Dispatch on Warning Level
+                                        val closeApproaching = entities.firstOrNull {
+                                            it.distanceMeters <= 2.0f && it.isMoving && it.isApproachingUser
+                                        }
+                                        val closeStaticCollision = entities.firstOrNull {
+                                            it.distanceMeters <= 2.0f && !it.isMoving && it.inCentralCorridor && it.relativeClosingSpeed > 0.20f
+                                        }
+
+                                        if (closeApproaching != null && (now - lastHapticVibrateTime > 1500L)) {
+                                            lastHapticVibrateTime = now
+                                            hapticManager.vibrateApproachingHazard2M()
+                                        } else if (closeStaticCollision != null && (now - lastHapticVibrateTime > 1800L)) {
+                                            lastHapticVibrateTime = now
+                                            hapticManager.vibrateImminentStaticCollision2M()
                                         }
 
                                         // Handle Directional Steering (Turn Left/Right around verified obstacles)
@@ -498,51 +544,73 @@ fun LiveCameraNavScreen(
                                             it.suggestedAction == SuggestedAction.TURN_RIGHT
                                         }
 
-                                            if (steerEntity != null) {
-                                                val action = steerEntity.suggestedAction
-                                                val steerMsg = if (steerEntity.isPedestrian) {
-                                                    if (action == SuggestedAction.TURN_LEFT) {
-                                                        if (isHi) "Aage insaan hai, thoda baayein chalein" else "Person ahead, move slightly left"
-                                                    } else {
-                                                        if (isHi) "Aage insaan hai, thoda daayein chalein" else "Person ahead, move slightly right"
-                                                    }
+                                        if (steerEntity != null) {
+                                            clearFrameCount = 0
+                                            val action = steerEntity.suggestedAction
+                                            val steerMsg = if (steerEntity.isPedestrian) {
+                                                if (action == SuggestedAction.TURN_LEFT) {
+                                                    if (isHi) "Aage insaan hai, thoda baayein chalein" else "Person ahead, move slightly left"
                                                 } else {
-                                                    if (action == SuggestedAction.TURN_LEFT) {
-                                                        if (isHi) "Thoda baayein chalein" else "Move slightly left"
-                                                    } else {
-                                                        if (isHi) "Thoda daayein chalein" else "Move slightly right"
-                                                    }
-                                                }
-                                                lastAlertText = steerMsg
-
-                                                if (lastSpokenAction != action || (now - lastSpokenTime > 3500L)) {
-                                                    lastSpokenTime = now
-                                                    lastSpokenAction = action
-                                                    if (action == SuggestedAction.TURN_LEFT) {
-                                                        hapticManager.vibrateTurnLeft()
-                                                    } else {
-                                                        hapticManager.vibrateTurnRight()
-                                                    }
-                                                    speechManager.speakGuidance(steerMsg)
+                                                    if (isHi) "Aage insaan hai, thoda daayein chalein" else "Person ahead, move slightly right"
                                                 }
                                             } else {
-                                                // Normal verified clear path
-                                                if (activeRouteDestination != null) {
-                                                    lastAlertText = "$turnIcon $turnManeuverHi"
-                                                } else if (entities.isNotEmpty()) {
-                                                    val nearest = entities.minByOrNull { it.distanceMeters }!!
-                                                    val distFt = (nearest.distanceFeet * 10).toInt() / 10.0
-                                                    val icon = if (nearest.isPedestrian) "🧍" else if (nearest.isVehicle) "🚗" else "⚠️"
-                                                    lastAlertText = "$icon ${nearest.hindiName} • ${distFt}ft (${nearest.spatialZone})"
-                                                } else if (labels.isNotEmpty()) {
-                                                    val labelDesc = labels.take(2).map { aiDetector.translateToHindi(it) }.joinToString(", ")
-                                                    lastAlertText = "Dikh raha hai: $labelDesc"
+                                                if (action == SuggestedAction.TURN_LEFT) {
+                                                    if (isHi) "Thoda baayein chalein" else "Move slightly left"
                                                 } else {
-                                                    lastAlertText = if (isHi) "Rasta saaf hai • Aage badhein" else "Path is clear • Continue"
+                                                    if (isHi) "Thoda daayein chalein" else "Move slightly right"
                                                 }
+                                            }
+                                            lastAlertText = steerMsg
+
+                                            if (lastSpokenAction != action || (now - lastSpokenTime > 3500L)) {
+                                                lastSpokenTime = now
+                                                lastSpokenAction = action
+                                                if (action == SuggestedAction.TURN_LEFT) {
+                                                    hapticManager.vibrateTurnLeft()
+                                                } else {
+                                                    hapticManager.vibrateTurnRight()
+                                                }
+                                                speechManager.speakGuidance(steerMsg)
+                                            }
+                                        } else {
+                                            // Proactive "Path Clear -> Walk Ahead" Announcement
+                                            val isCorridorClear = entities.none {
+                                                it.threatLevel == ThreatLevel.CRITICAL ||
+                                                it.threatLevel == ThreatLevel.WARNING ||
+                                                it.distanceMeters <= 2.0f
+                                            }
+
+                                            if (isCorridorClear) {
+                                                clearFrameCount++
+                                            } else {
+                                                clearFrameCount = 0
+                                            }
+
+                                            // After 3+ consecutive clear frames (≈0.5s), announce "aage badhiye" (cooldown 9s)
+                                            if (clearFrameCount >= 3 && (now - lastClearPathAnnounceTime > 9000L)) {
+                                                lastClearPathAnnounceTime = now
+                                                clearFrameCount = 0
+                                                val clearMsg = if (isHi) "Raasta saaf hai, aage badhiye." else "Path is clear, walk ahead."
+                                                speechManager.speakGuidance(clearMsg)
+                                            }
+
+                                            // Normal verified clear path display
+                                            if (activeRouteDestination != null) {
+                                                lastAlertText = "$turnIcon $turnManeuverHi"
+                                            } else if (entities.isNotEmpty()) {
+                                                val nearest = entities.minByOrNull { it.distanceMeters }!!
+                                                val distFt = (nearest.distanceFeet * 10).toInt() / 10.0
+                                                val icon = if (nearest.isPedestrian) "🧍" else if (nearest.isVehicle) "🚗" else "⚠️"
+                                                lastAlertText = "$icon ${nearest.hindiName} • ${distFt}ft (${nearest.spatialZone})"
+                                            } else if (labels.isNotEmpty()) {
+                                                val labelDesc = labels.take(2).map { aiDetector.translateToHindi(it) }.joinToString(", ")
+                                                lastAlertText = "Dikh raha hai: $labelDesc"
+                                            } else {
+                                                lastAlertText = if (isCorridorClear) "🟢 Raasta saaf hai" else ""
                                             }
                                         }
                                     }
+                                }
                                 } else {
                                     imageProxy.close()
                                 }
@@ -586,7 +654,7 @@ fun LiveCameraNavScreen(
                 strokeWidth = 3.dp.toPx()
             )
 
-            // Draw Real Bounding Boxes for verified obstacles only
+            // Draw All Detected Objects with Color-Coded Bounding Boxes
             if (!isPaused && !isCameraDarkOrCovered) {
                 val textPaint = Paint().apply {
                     color = android.graphics.Color.WHITE
@@ -599,13 +667,17 @@ fun LiveCameraNavScreen(
                     style = Paint.Style.FILL
                 }
 
-                detectedEntities.forEach { entity ->
+                // Render ALL detected objects so nothing is hidden from the user/companion
+                allDetectedEntities.forEach { entity ->
                     val box = entity.boundingBox
-                    val boxColor = when (entity.suggestedAction) {
-                        SuggestedAction.EMERGENCY_STOP, SuggestedAction.AHEAD_BLOCKED -> CriticalRed
-                        SuggestedAction.TURN_LEFT, SuggestedAction.TURN_RIGHT -> WarningOrange
-                        SuggestedAction.CONTINUE_SAFE -> HighContrastYellow
+                    val boxColor = when (entity.threatLevel) {
+                        ThreatLevel.CRITICAL -> CriticalRed
+                        ThreatLevel.WARNING -> WarningOrange
+                        ThreatLevel.CAUTION -> HighContrastYellow
+                        ThreatLevel.ADVISORY -> SafetyCyan
+                        ThreatLevel.NONE -> Color(0x66AAAAAA) // Dim gray for safe background objects
                     }
+                    val strokeWidth = if (entity.threatLevel == ThreatLevel.NONE) 2.dp else 4.dp
 
                     val left = box.left * w
                     val top = box.top * h
@@ -617,34 +689,36 @@ fun LiveCameraNavScreen(
                         color = boxColor,
                         topLeft = Offset(left, top),
                         size = Size(right - left, bottom - top),
-                        style = Stroke(width = 4.dp.toPx())
+                        style = Stroke(width = strokeWidth.toPx())
                     )
 
-                    // Tag above bounding box
-                    val distFt = (entity.distanceFeet * 10).toInt() / 10.0
-                    val speedText = if (entity.approachSpeedMps > 0.4f) String.format(" • %.1f m/s", entity.approachSpeedMps) else ""
-                    val icon = if (entity.isPedestrian) "🧍 " else if (entity.isVehicle) "🚗 " else ""
-                    val tagText = "$icon${entity.hindiName} • ${distFt}ft (${entity.movementDirection}$speedText)"
+                    // Tag above bounding box (for threats or close objects <= 3m)
+                    if (entity.threatLevel != ThreatLevel.NONE || entity.distanceMeters <= 3.0f) {
+                        val distFt = (entity.distanceFeet * 10).toInt() / 10.0
+                        val speedText = if (entity.approachSpeedMps > 0.4f) String.format(" • %.1f m/s", entity.approachSpeedMps) else ""
+                        val icon = if (entity.isPedestrian) "🧍 " else if (entity.isVehicle) "🚗 " else ""
+                        val tagText = "$icon${entity.hindiName} • ${distFt}ft (${entity.movementDirection}$speedText)"
 
-                    val tagWidth = textPaint.measureText(tagText) + 24f
-                    val tagTop = (top - 54f).coerceAtLeast(10f)
+                        val tagWidth = textPaint.measureText(tagText) + 24f
+                        val tagTop = (top - 54f).coerceAtLeast(10f)
 
-                    drawContext.canvas.nativeCanvas.drawRoundRect(
-                        left,
-                        tagTop,
-                        left + tagWidth,
-                        tagTop + 50f,
-                        12f,
-                        12f,
-                        bgPaint
-                    )
+                        drawContext.canvas.nativeCanvas.drawRoundRect(
+                            left,
+                            tagTop,
+                            left + tagWidth,
+                            tagTop + 50f,
+                            12f,
+                            12f,
+                            bgPaint
+                        )
 
-                    drawContext.canvas.nativeCanvas.drawText(
-                        tagText,
-                        left + 12f,
-                        tagTop + 36f,
-                        textPaint
-                    )
+                        drawContext.canvas.nativeCanvas.drawText(
+                            tagText,
+                            left + 12f,
+                            tagTop + 36f,
+                            textPaint
+                        )
+                    }
                 }
             }
         }
@@ -763,6 +837,16 @@ fun LiveCameraNavScreen(
                         text = "Corridor: ${currentDebugMetrics.corridorStatus} | Active Tracks: ${currentDebugMetrics.activeTrackCount}",
                         fontSize = 11.sp,
                         color = HighContrastYellow
+                    )
+                    Text(
+                        text = "Frames In: ${currentDebugMetrics.framesIn} | Rej Dk: ${currentDebugMetrics.rejectedDark} | Rej Pitch: ${currentDebugMetrics.rejectedPitch}",
+                        fontSize = 11.sp,
+                        color = if (currentDebugMetrics.rejectedDark > 0 || currentDebugMetrics.rejectedPitch > 0) HighContrastYellow else TextWhite
+                    )
+                    Text(
+                        text = "ML Box: ${currentDebugMetrics.mlBoxes} -> AftBL: ${currentDebugMetrics.afterBlacklist} -> WLCand: ${currentDebugMetrics.whitelistCandidates} -> Geo: ${currentDebugMetrics.geoHazards} -> Conf: ${currentDebugMetrics.confirmed} -> Trk: ${currentDebugMetrics.tracked} | Spoken: ${currentDebugMetrics.alertsSpoken}",
+                        fontSize = 10.sp,
+                        color = SafetyCyan
                     )
                 }
             }
@@ -898,16 +982,22 @@ fun LiveCameraNavScreen(
                 isStoppedByHazard -> "🛑 RUKIYE! AAGE KHATRA HAI"
                 detectedEntities.any { it.suggestedAction == SuggestedAction.TURN_LEFT } -> "⬅️ THODA BAAYEIN CHALEIN"
                 detectedEntities.any { it.suggestedAction == SuggestedAction.TURN_RIGHT } -> "➡️ THODA DAAYEIN CHALEIN"
-                else -> "🟢 RASTA SAAF HAI • CHALIYE"
+                detectedEntities.isEmpty() && allDetectedEntities.isNotEmpty() -> "🟢 AAGE BADHIYE • RAASTA SAAF HAI"
+                detectedEntities.isEmpty() -> "🟢 DRISHTI ACTIVE • RAASTA SAAF HAI"
+                else -> "🟢 DRISHTI ACTIVE"
             }
 
             val subtext = when {
                 isCameraDarkOrCovered -> "Lens dhaka hua hai ya andhera hai • Torch on karein"
                 isStoppedByHazard -> lastAlertText
+                detectedEntities.isEmpty() && allDetectedEntities.isNotEmpty() -> {
+                    val safeCount = allDetectedEntities.size
+                    if (activeRouteDestination != null) "$turnIcon $turnManeuverHi • $safeCount background objects"
+                    else "$safeCount chizein dikh rahi hain • Koi khatra nahi"
+                }
                 detectedEntities.isEmpty() -> {
                     if (activeRouteDestination != null) "$turnIcon $turnManeuverHi"
-                    else if (speechManager.currentLanguage == "hi") "Aage rasta bilkul saaf hai • Aage badhein"
-                    else "Path ahead is clear • Walk ahead"
+                    else "Path is clear ahead"
                 }
                 else -> lastAlertText
             }

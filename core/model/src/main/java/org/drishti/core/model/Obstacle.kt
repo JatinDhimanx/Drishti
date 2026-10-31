@@ -18,5 +18,8 @@ data class TrackedObstacle(
     val lastAnnouncedTimestampMs: Long = 0L,
     val spatialZone: SpatialZone = SpatialZone.CENTER,
     val distanceTier: DistanceTier = DistanceTier.fromDistance(estimatedDistanceMeters),
-    val isMetricCalibrated: Boolean = true
+    val isMetricCalibrated: Boolean = true,
+    val isMoving: Boolean = false,
+    val isApproachingUser: Boolean = false,
+    val relativeClosingSpeed: Float = 0.0f
 )

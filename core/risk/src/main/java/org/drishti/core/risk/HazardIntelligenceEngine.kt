@@ -6,7 +6,6 @@ import org.drishti.core.model.MotionState
 import org.drishti.core.model.PathTrajectory
 import org.drishti.core.model.SpatialZone
 import org.drishti.core.model.ThreatLevel
-import org.drishti.core.model.TrackedObstacle
 import org.drishti.core.model.WalkingCorridor
 import org.drishti.core.tracking.ByteTracklet
 import kotlin.math.roundToInt
@@ -15,15 +14,17 @@ import kotlin.math.roundToInt
  * Intelligent Hazard Intelligence & Alert Suppression Engine for Drishti.
  *
  * Implements context-aware threat scoring, collision gating, dynamic alert ranking,
- * and intelligent chatter suppression to protect visually impaired users from audio fatigue.
+ * and ultra-short actionable speech alerts (<3-5 words: [Hazard] + [Distance/Direction] + [Action])
+ * with a 4s cooldown on static objects and complete silence on clear paths.
  */
 class HazardIntelligenceEngine(
     var userLanguage: String = "hi",
     var corridor: WalkingCorridor = WalkingCorridor()
 ) {
-    // Cooldown map: TrackId -> Last Announce Timestamp
+    // Cooldown maps: TrackId -> State
     private val announcedTimestamps = mutableMapOf<Long, Long>()
     private val announcedThreatLevels = mutableMapOf<Long, ThreatLevel>()
+    private val announcedDistances = mutableMapOf<Long, Float>()
 
     data class HazardAssessment(
         val tracklet: ByteTracklet,
@@ -32,7 +33,9 @@ class HazardIntelligenceEngine(
         val spatialZone: SpatialZone,
         val distanceTier: DistanceTier,
         val alertSpeech: String,
-        val requiresImmediateHaptic: Boolean
+        val requiresImmediateHaptic: Boolean,
+        val isApproachingDynamic2M: Boolean = false,
+        val isImminentStaticCollision2M: Boolean = false
     )
 
     /**
@@ -47,7 +50,32 @@ class HazardIntelligenceEngine(
             val level = scoreToThreatLevel(score, track)
             val zone = corridor.classifyZone(track.currentBox)
             val distTier = DistanceTier.fromDistance(track.currentDistanceMeters)
-            val speech = formatSpeech(track, level, zone, distTier)
+            val speech = formatActionableSpeech(track, level, zone, distTier)
+
+            val inCentralCorridor = corridor.isInCentralCollisionCorridor(track.currentBox)
+            val isWithin2M = track.currentDistanceMeters <= 2.0f
+
+            // Rule 2: Approaching Dynamic Hazard <= 2.0m (Person, vehicle, dog closing in)
+            val isApproachingDynamic2M = track.isMoving && track.isApproachingUser && isWithin2M
+
+            // Rule 3: Imminent Static Collision <= 2.0m (In central walking path and user walking into it)
+            val isImminentStaticCollision2M = !track.isMoving && inCentralCorridor && isWithin2M && track.relativeClosingSpeed > 0.20f
+
+            // Ground drop-offs or head obstacles close in path
+            val isGroundOrHeadCritical = (track.smoothedClass.category.isGroundTrap && track.currentDistanceMeters <= 2.5f) ||
+                    (track.smoothedClass.category.isHeadHazard && isWithin2M)
+
+            // Strict Haptic Gating:
+            // Rule 1: Static & Far (>2.0m) or Off-Path -> NEVER vibrate (requiresImmediateHaptic = false)
+            val requiresHaptic = when {
+                isGroundOrHeadCritical -> true
+                isApproachingDynamic2M -> true
+                isImminentStaticCollision2M -> true
+                !track.isMoving && (!isWithin2M || !inCentralCorridor) -> false // Rule 1
+                level == ThreatLevel.CRITICAL -> true
+                level == ThreatLevel.WARNING && inCentralCorridor -> true
+                else -> false
+            }
 
             HazardAssessment(
                 tracklet = track,
@@ -56,7 +84,9 @@ class HazardIntelligenceEngine(
                 spatialZone = zone,
                 distanceTier = distTier,
                 alertSpeech = speech,
-                requiresImmediateHaptic = level == ThreatLevel.CRITICAL || level == ThreatLevel.WARNING
+                requiresImmediateHaptic = requiresHaptic,
+                isApproachingDynamic2M = isApproachingDynamic2M,
+                isImminentStaticCollision2M = isImminentStaticCollision2M
             )
         }.sortedByDescending { it.threatScore }
 
@@ -73,6 +103,7 @@ class HazardIntelligenceEngine(
         currentTimestampMs: Long = System.currentTimeMillis()
     ): Boolean {
         if (assessment.threatLevel == ThreatLevel.NONE) return false
+        if (assessment.alertSpeech.isBlank()) return false
 
         // Preemption Rule: If there is an active CRITICAL hazard, suppress all lower-priority alerts
         val hasActiveCritical = allAssessments.any { it.threatLevel == ThreatLevel.CRITICAL }
@@ -83,22 +114,32 @@ class HazardIntelligenceEngine(
         val trackId = assessment.tracklet.trackId
         val lastAnnouncedTime = announcedTimestamps[trackId] ?: 0L
         val lastThreat = announcedThreatLevels[trackId] ?: ThreatLevel.NONE
+        val lastDistance = announcedDistances[trackId] ?: Float.MAX_VALUE
 
         // Escalation Breakthrough: Immediate alert if threat escalated (e.g. Warning -> Critical)
         if (assessment.threatLevel.priority > lastThreat.priority) {
-            recordAnnouncement(trackId, assessment.threatLevel, currentTimestampMs)
+            recordAnnouncement(trackId, assessment.threatLevel, assessment.tracklet.currentDistanceMeters, currentTimestampMs)
             return true
         }
 
-        // Cooldown: 4.0s per track ID unless threat level escalates
+        // Distance delta breakthrough: If user or obstacle closed in by >= 0.6 meters, re-alert immediately
+        val distanceDelta = lastDistance - assessment.tracklet.currentDistanceMeters
+        if (distanceDelta >= 0.6f && assessment.threatLevel != ThreatLevel.ADVISORY) {
+            recordAnnouncement(trackId, assessment.threatLevel, assessment.tracklet.currentDistanceMeters, currentTimestampMs)
+            return true
+        }
+
+        // Cooldown: 4.0s for stationary obstacles, 2.0s for fast closing threats
         val cooldownMs = when (assessment.threatLevel) {
-            ThreatLevel.CRITICAL -> 2500L
-            ThreatLevel.WARNING, ThreatLevel.CAUTION, ThreatLevel.ADVISORY -> 4000L
+            ThreatLevel.CRITICAL -> 2000L
+            ThreatLevel.WARNING -> 3500L
+            ThreatLevel.CAUTION -> 4000L
+            ThreatLevel.ADVISORY -> 5000L
             ThreatLevel.NONE -> Long.MAX_VALUE
         }
 
         if (currentTimestampMs - lastAnnouncedTime > cooldownMs) {
-            recordAnnouncement(trackId, assessment.threatLevel, currentTimestampMs)
+            recordAnnouncement(trackId, assessment.threatLevel, assessment.tracklet.currentDistanceMeters, currentTimestampMs)
             return true
         }
 
@@ -112,11 +153,11 @@ class HazardIntelligenceEngine(
         val category = track.smoothedClass.category
 
         // 1. Base Hazard Weight
-        var baseScore = when (category) {
-            AssistiveClass.HazardCategory.GROUND_HAZARD -> 85f
-            AssistiveClass.HazardCategory.HEAD_LEVEL -> 90f
-            AssistiveClass.HazardCategory.DYNAMIC_ACTOR -> 75f
-            AssistiveClass.HazardCategory.STREET_FURNITURE -> 50f
+        val baseScore = when {
+            category.isGroundTrap -> 95f
+            category.isHeadHazard -> 90f
+            category.isDynamicHazard -> 75f
+            else -> 50f
         }
 
         // 2. Trajectory Multiplier
@@ -142,10 +183,10 @@ class HazardIntelligenceEngine(
 
         // 4. Motion State Adjustments
         when (track.motionState) {
-            MotionState.APPROACHING -> score += 20f
-            MotionState.RECEDING -> score *= 0.25f // Moving away presents minimal risk
+            MotionState.APPROACHING -> score += 25f
+            MotionState.RECEDING -> score *= 0.20f // Moving away presents minimal risk
             MotionState.STATIONARY -> {
-                if (track.pathTrajectory == PathTrajectory.OUTSIDE_PATH) score *= 0.20f
+                if (track.pathTrajectory == PathTrajectory.OUTSIDE_PATH) score *= 0.15f
             }
             else -> {}
         }
@@ -183,7 +224,12 @@ class HazardIntelligenceEngine(
         }
     }
 
-    private fun formatSpeech(
+    /**
+     * Formats ultra-short actionable speech (<3-5 words):
+     * [Hazard] + [Distance/Direction] + [Action]
+     * Never outputs "path clear" or "rasta saaf hai".
+     */
+    private fun formatActionableSpeech(
         track: ByteTracklet,
         level: ThreatLevel,
         zone: SpatialZone,
@@ -199,50 +245,92 @@ class HazardIntelligenceEngine(
         }
 
         val zoneEn = when (zone) {
-            SpatialZone.CENTER -> "Ahead"
-            SpatialZone.LEFT -> "On your left"
-            SpatialZone.RIGHT -> "On your right"
+            SpatialZone.CENTER -> "ahead"
+            SpatialZone.LEFT -> "on your left"
+            SpatialZone.RIGHT -> "on your right"
         }
 
+        // Action recommendation
+        val actionHi = when (zone) {
+            SpatialZone.LEFT -> "daayein chalein"
+            SpatialZone.RIGHT -> "baayein chalein"
+            SpatialZone.CENTER -> "daayein mudiye"
+        }
+
+        val actionEn = when (zone) {
+            SpatialZone.LEFT -> "step right"
+            SpatialZone.RIGHT -> "step left"
+            SpatialZone.CENTER -> "step right"
+        }
+
+        val isCloseThreat = track.currentDistanceMeters <= 2.0f
+
         return if (userLanguage == "hi") {
-            when (level) {
+            if (isCloseThreat) {
+                when {
+                    item.category.isGroundTrap -> "Rukiye! Aage ${item.hindiLabel}."
+                    item.category.isHeadHazard -> "Rukiye! Sar par ${item.hindiLabel}."
+                    track.smoothedClass == AssistiveClass.PEDESTRIAN_MOVING -> "Insaan aa raha, $actionHi."
+                    track.isMoving && track.isApproachingUser -> "${item.hindiLabel} aa raha, $actionHi."
+                    else -> "${item.hindiLabel} samne, $actionHi."
+                }
+            } else when (level) {
                 ThreatLevel.CRITICAL -> {
-                    if (track.motionState == MotionState.APPROACHING) {
-                        "Rukiye! $zoneHi ${item.hindiLabel} aa raha hai!"
-                    } else {
-                        "Rukiye! $zoneHi $distM meter par ${item.hindiLabel} hai!"
+                    when {
+                        item.category.isGroundTrap -> "Rukiye! Aage ${item.hindiLabel}."
+                        item.category.isHeadHazard -> "Rukiye! Sar par ${item.hindiLabel}."
+                        track.motionState == MotionState.APPROACHING -> "Rukiye! $zoneHi ${item.hindiLabel} aa raha."
+                        else -> "Rukiye! Samne ${item.hindiLabel}."
                     }
                 }
-                ThreatLevel.WARNING -> "Savdhan, $zoneHi $distM meter, ${item.hindiLabel}."
-                ThreatLevel.CAUTION -> "Dhyan dijiye, $zoneHi ${distTier.hindiLabel}, ${item.hindiLabel}."
-                ThreatLevel.ADVISORY -> "$zoneHi ${item.hindiLabel}."
+                ThreatLevel.WARNING -> {
+                    "${item.hindiLabel} $zoneHi, $actionHi."
+                }
+                ThreatLevel.CAUTION -> {
+                    "$zoneHi ${item.hindiLabel}."
+                }
+                ThreatLevel.ADVISORY -> ""
                 ThreatLevel.NONE -> ""
             }
         } else {
-            when (level) {
+            if (isCloseThreat) {
+                when {
+                    item.category.isGroundTrap -> "Stop! ${item.englishLabel} ahead."
+                    item.category.isHeadHazard -> "Stop! Head hazard ahead."
+                    track.smoothedClass == AssistiveClass.PEDESTRIAN_MOVING -> "Person approaching, $actionEn."
+                    track.isMoving && track.isApproachingUser -> "${item.englishLabel} approaching, $actionEn."
+                    else -> "${item.englishLabel} ahead, $actionEn."
+                }
+            } else when (level) {
                 ThreatLevel.CRITICAL -> {
-                    if (track.motionState == MotionState.APPROACHING) {
-                        "Stop! ${item.englishLabel} approaching $zoneEn!"
-                    } else {
-                        "Stop! ${item.englishLabel} directly $zoneEn, $distM meters!"
+                    when {
+                        item.category.isGroundTrap -> "Stop! ${item.englishLabel} ahead."
+                        item.category.isHeadHazard -> "Stop! Head hazard ahead."
+                        track.motionState == MotionState.APPROACHING -> "Stop! ${item.englishLabel} approaching."
+                        else -> "Stop! ${item.englishLabel} ahead."
                     }
                 }
-                ThreatLevel.WARNING -> "Warning, ${item.englishLabel} $zoneEn, $distM meters."
-                ThreatLevel.CAUTION -> "Caution, ${item.englishLabel} $zoneEn, ${distTier.englishLabel}."
-                ThreatLevel.ADVISORY -> "${item.englishLabel} $zoneEn."
+                ThreatLevel.WARNING -> {
+                    "${item.englishLabel} $zoneEn, $actionEn."
+                }
+                ThreatLevel.CAUTION -> {
+                    "${item.englishLabel} $zoneEn."
+                }
+                ThreatLevel.ADVISORY -> ""
                 ThreatLevel.NONE -> ""
             }
         }
     }
 
-    private fun recordAnnouncement(trackId: Long, level: ThreatLevel, timestampMs: Long) {
+    private fun recordAnnouncement(trackId: Long, level: ThreatLevel, distanceMeters: Float, timestampMs: Long) {
         announcedTimestamps[trackId] = timestampMs
         announcedThreatLevels[trackId] = level
+        announcedDistances[trackId] = distanceMeters
     }
 
     fun reset() {
         announcedTimestamps.clear()
         announcedThreatLevels.clear()
+        announcedDistances.clear()
     }
 }
-

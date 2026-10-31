@@ -69,5 +69,19 @@ class FeedbackManagerTest {
         assertEquals(255, amplitudes[1])
         assertEquals(255, amplitudes[5])
     }
+
+    @Test
+    fun test2MeterCollisionWaveforms() {
+        val dynamicPattern = HapticManager.PATTERN_APPROACHING_DYNAMIC_2M
+        val staticPattern = HapticManager.PATTERN_IMMINENT_STATIC_COLLISION_2M
+
+        // Dynamic approaching: Fast sharp triple pulse (size = 6)
+        assertEquals(6, dynamicPattern.size)
+        assertEquals(6, HapticManager.AMPLITUDES_APPROACHING_DYNAMIC_2M.size)
+
+        // Static collision: Solid strong continuous pulse (size = 2, amplitude = 255)
+        assertEquals(2, staticPattern.size)
+        assertEquals(255, HapticManager.AMPLITUDES_IMMINENT_STATIC_COLLISION_2M[1])
+    }
 }
 

@@ -29,6 +29,7 @@ class GeometryObstacleEngine(
 
     companion object {
         const val MAX_VALID_PITCH_DEGREES = 40.0f
+        const val DEFAULT_DEPRESSION_DEGREES = 15.0f
         const val CORRIDOR_HALF_ANGLE_DEG = 15.0f // center ±15°
         const val MIN_CORRIDOR_DIST_M = 0.5f
         const val MAX_CORRIDOR_DIST_M = 4.0f
@@ -37,6 +38,18 @@ class GeometryObstacleEngine(
         const val HEAD_HAZARD_MAX_HEIGHT_M = 2.0f
         const val GROUND_PROTRUSION_THRESHOLD_M = 0.08f // 8cm above ground is an obstacle
         const val DROP_OFF_DEPTH_DISCONTINUITY_RATIO = 1.6f // Sudden 60%+ depth increase
+
+        /**
+         * Computes camera depression angle from Android sensor 3x3 rotation matrix.
+         * 0° = looking straight ahead horizontally
+         * +deg = camera tilted downward toward the walking path / ground
+         * -deg = camera tilted upward toward the sky
+         */
+        fun computeDepressionDegrees(rotationMatrix: FloatArray): Float {
+            if (rotationMatrix.size < 9) return DEFAULT_DEPRESSION_DEGREES
+            val r8 = rotationMatrix[8].coerceIn(-1.0f, 1.0f)
+            return Math.toDegrees(kotlin.math.asin(r8.toDouble())).toFloat()
+        }
     }
 
     data class DepthGrid(
@@ -243,10 +256,11 @@ class GeometryObstacleEngine(
     }
 
     /**
-     * Checks if pitch angle is outside safe pedestrian operating limits.
+     * Checks if pitch angle is outside safe pedestrian operating limits (|pitch| <= 40°).
+     * Includes small epsilon tolerance (0.05°) for floating point precision.
      */
     fun isPitchSafe(pitchDegrees: Float): Boolean {
-        return abs(pitchDegrees) <= MAX_VALID_PITCH_DEGREES
+        return abs(pitchDegrees) <= (MAX_VALID_PITCH_DEGREES + 0.05f)
     }
 }
 

@@ -3,10 +3,10 @@ package org.drishti.core.model
 /**
  * Three-zone lateral spatial classification for pedestrian path planning.
  */
-enum class SpatialZone(val displayName: String, val hindiLabel: String) {
-    LEFT("Left", "Baayein"),
-    CENTER("Center", "Samne"),
-    RIGHT("Right", "Daayein")
+enum class SpatialZone(val displayName: String, val hindiLabel: String, val clockHour: Int = 12) {
+    LEFT("Left", "Baayein", 10),
+    CENTER("Center", "Samne", 12),
+    RIGHT("Right", "Daayein", 2)
 }
 
 /**
@@ -48,39 +48,71 @@ enum class SurfaceType(val englishLabel: String, val hindiLabel: String) {
 
 /**
  * Walking corridor boundaries defined in normalized frame coordinates [0.0, 1.0].
- * Dynamically adjusts for camera mounting yaw offset.
+ * Dynamically adjusts for camera mounting yaw offset and perspective trapezoid.
  */
 data class WalkingCorridor(
     val leftBound: Float = 0.30f,
     val rightBound: Float = 0.70f,
+    val topWidthRatio: Float = rightBound - leftBound,
+    val bottomWidthRatio: Float = rightBound - leftBound,
     val yawOffsetDegrees: Float = 0.0f
 ) {
     val corridorWidth: Float get() = rightBound - leftBound
     val corridorCenter: Float get() = (leftBound + rightBound) / 2.0f
 
+    fun leftBoundAtY(y: Float): Float {
+        val clampedY = y.coerceIn(0f, 1f)
+        val center = corridorCenter
+        val halfWidth = (topWidthRatio + (bottomWidthRatio - topWidthRatio) * clampedY) / 2f
+        return (center - halfWidth).coerceIn(0f, 1f)
+    }
+
+    fun rightBoundAtY(y: Float): Float {
+        val clampedY = y.coerceIn(0f, 1f)
+        val center = corridorCenter
+        val halfWidth = (topWidthRatio + (bottomWidthRatio - topWidthRatio) * clampedY) / 2f
+        return (center + halfWidth).coerceIn(0f, 1f)
+    }
+
     /**
      * Checks if a point (normalized X) falls inside the walking corridor.
      */
-    fun contains(x: Float): Boolean = x in leftBound..rightBound
+    fun contains(x: Float): Boolean = contains(x, 0.8f)
+
+    fun contains(x: Float, y: Float): Boolean = x in leftBoundAtY(y)..rightBoundAtY(y)
 
     /**
      * Determines whether an obstacle bounding box overlaps with the active walking corridor.
      * Returns an overlap ratio from 0.0 (no overlap) to 1.0 (completely occupies corridor).
      */
     fun computeOverlap(box: BoundingBox): Float {
-        val overlapLeft = maxOf(leftBound, box.left)
-        val overlapRight = minOf(rightBound, box.right)
+        val left = leftBoundAtY(box.groundContactY)
+        val right = rightBoundAtY(box.groundContactY)
+        val width = maxOf(0.01f, right - left)
+        val overlapLeft = maxOf(left, box.left)
+        val overlapRight = minOf(right, box.right)
         val overlapWidth = maxOf(0f, overlapRight - overlapLeft)
-        return (overlapWidth / corridorWidth).coerceIn(0f, 1f)
+        return (overlapWidth / width).coerceIn(0f, 1f)
+    }
+
+    /**
+     * Checks if bounding box is in the central collision path (center 40%–60% of frame width).
+     */
+    fun isInCentralCollisionCorridor(box: BoundingBox): Boolean {
+        val centralLeft = 0.40f
+        val centralRight = 0.60f
+        return box.centerX in centralLeft..centralRight || (box.left < centralRight && box.right > centralLeft)
     }
 
     /**
      * Classifies a bounding box center into LEFT, CENTER, or RIGHT.
      */
     fun classifyZone(box: BoundingBox): SpatialZone {
+        val left = leftBoundAtY(box.groundContactY)
+        val right = rightBoundAtY(box.groundContactY)
         return when {
-            box.centerX < leftBound -> SpatialZone.LEFT
-            box.centerX > rightBound -> SpatialZone.RIGHT
+            box.centerX < left -> SpatialZone.LEFT
+            box.centerX > right -> SpatialZone.RIGHT
             else -> SpatialZone.CENTER
         }
     }
@@ -138,5 +170,3 @@ data class GeometricHazard(
     val boundingBox: BoundingBox,
     val isPitchValid: Boolean = true
 )
-
-
